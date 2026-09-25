@@ -675,6 +675,7 @@ class PendingProcessingScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final p = MemoPalette.of(context);
+    final isPdf = document.originalFile != null;
     return Scaffold(
       appBar: AppBar(title: const Text('Tài liệu đã nhập')),
       body: Center(
@@ -700,13 +701,15 @@ class PendingProcessingScreen extends StatelessWidget {
                 ),
                 const SizedBox(height: 20),
                 Text(
-                  'Tài liệu đang chờ xử lý',
+                  isPdf ? 'Tài liệu đang chờ OCR' : 'Tài liệu đang chờ xử lý',
                   textAlign: TextAlign.center,
                   style: Theme.of(context).textTheme.headlineSmall,
                 ),
                 const SizedBox(height: 8),
                 Text(
-                  '${document.pages.length} trang ảnh gốc đã được lưu an toàn trên thiết bị. OCR sẽ được nối vào bước tiếp theo.',
+                  isPdf
+                      ? 'PDF gốc và ${document.pages.length} trang đã chọn được lưu an toàn trên thiết bị. OCR sẽ được nối vào bước tiếp theo.'
+                      : '${document.pages.length} trang ảnh gốc đã được lưu an toàn trên thiết bị. OCR sẽ được nối vào bước tiếp theo.',
                   textAlign: TextAlign.center,
                   style: Theme.of(context).textTheme.bodyMedium,
                 ),

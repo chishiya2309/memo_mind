@@ -2,7 +2,9 @@ import 'dart:typed_data';
 
 enum DocumentImageSource { camera, gallery }
 
-enum ImportedDocumentStatus { pendingProcessing }
+enum DocumentPageSource { camera, gallery, pdf }
+
+enum ImportedDocumentStatus { pendingProcessing, pendingOcr }
 
 enum DocumentPrivacy { private }
 
@@ -53,13 +55,85 @@ class ImageInspection {
   }
 }
 
+class PdfCandidate {
+  const PdfCandidate({
+    required this.temporaryPath,
+    required this.originalName,
+    required this.fileSizeBytes,
+    required this.sha256,
+    this.ownsTemporaryFile = true,
+  });
+
+  final String temporaryPath;
+  final String originalName;
+  final int fileSizeBytes;
+  final String sha256;
+  final bool ownsTemporaryFile;
+}
+
+class PdfPageSize {
+  const PdfPageSize({required this.width, required this.height});
+
+  final double width;
+  final double height;
+}
+
+class PdfInspection {
+  const PdfInspection({
+    required this.pageCount,
+    required this.pageSizes,
+    required this.isEncrypted,
+  });
+
+  final int pageCount;
+  final List<PdfPageSize> pageSizes;
+  final bool isEncrypted;
+}
+
+class RenderedPdfPage {
+  const RenderedPdfPage({
+    required this.originalPageNumber,
+    required this.temporaryPath,
+    required this.fileSizeBytes,
+    required this.width,
+    required this.height,
+    required this.sha256,
+  });
+
+  final int originalPageNumber;
+  final String temporaryPath;
+  final int fileSizeBytes;
+  final int width;
+  final int height;
+  final String sha256;
+}
+
+class OriginalDocumentFile {
+  const OriginalDocumentFile({
+    required this.name,
+    required this.relativePath,
+    required this.absolutePath,
+    required this.mimeType,
+    required this.fileSizeBytes,
+    required this.sha256,
+  });
+
+  final String name;
+  final String relativePath;
+  final String absolutePath;
+  final String mimeType;
+  final int fileSizeBytes;
+  final String sha256;
+}
+
 class SourcePage {
   const SourcePage({
     required this.pageId,
     required this.documentId,
     required this.pageNumber,
+    required this.originalPageNumber,
     required this.source,
-    required this.originalRelativePath,
+    required this.dataRelativePath,
     required this.absolutePath,
     required this.mimeType,
     required this.fileSizeBytes,
@@ -74,8 +148,9 @@ class SourcePage {
   final String pageId;
   final String documentId;
   final int pageNumber;
-  final DocumentImageSource source;
-  final String originalRelativePath;
+  final int originalPageNumber;
+  final DocumentPageSource source;
+  final String dataRelativePath;
   final String absolutePath;
   final String mimeType;
   final int fileSizeBytes;
@@ -96,6 +171,7 @@ class ImportedDocument {
     required this.createdAt,
     required this.updatedAt,
     required this.pages,
+    this.originalFile,
   });
 
   final String documentId;
@@ -105,10 +181,17 @@ class ImportedDocument {
   final DateTime createdAt;
   final DateTime updatedAt;
   final List<SourcePage> pages;
+  final OriginalDocumentFile? originalFile;
 }
 
 enum ImportFailureCode {
+  pickerUnavailable,
   unsupportedFormat,
+  invalidPdf,
+  corruptPdf,
+  passwordProtected,
+  noPages,
+  pageRenderFailed,
   unreadableImage,
   insufficientStorage,
   cameraUnavailable,

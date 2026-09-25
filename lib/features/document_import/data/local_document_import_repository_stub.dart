@@ -1,7 +1,8 @@
 import '../domain/document_import_models.dart';
 import '../domain/document_import_repository.dart';
 
-class LocalDocumentImportRepository implements DocumentImportRepository {
+class LocalDocumentImportRepository
+    implements DocumentImportRepository, PdfImportRepository {
   const LocalDocumentImportRepository();
 
   ImportFailure get _unsupported => const ImportFailure(
@@ -26,6 +27,15 @@ class LocalDocumentImportRepository implements DocumentImportRepository {
 
   @override
   Future<void> discardCandidate(ImageCandidate candidate) async {}
+
+  @override
+  Future<ImportedDocument> createFromPdf({
+    required PdfCandidate candidate,
+    required List<RenderedPdfPage> pages,
+  }) => Future.error(_unsupported);
+
+  @override
+  Future<void> discardPdfCandidate(PdfCandidate candidate) async {}
 
   @override
   Future<ImportedDocument> getDocument(String documentId) =>

@@ -20,3 +20,12 @@ abstract interface class DocumentImportRepository {
 
   Future<void> discardCandidate(ImageCandidate candidate);
 }
+
+abstract interface class PdfImportRepository {
+  Future<ImportedDocument> createFromPdf({
+    required PdfCandidate candidate,
+    required List<RenderedPdfPage> pages,
+  });
+
+  Future<void> discardPdfCandidate(PdfCandidate candidate);
+}
