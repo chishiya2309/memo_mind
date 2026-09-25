@@ -6,8 +6,8 @@ import '../features/home/domain/home_dashboard_data.dart';
 import '../features/home/presentation/home_screen.dart';
 import '../features/document_import/data/local_document_import_repository.dart';
 import '../features/document_import/domain/document_import_models.dart';
-import '../features/document_import/domain/document_import_repository.dart';
 import '../features/document_import/presentation/document_import_flow.dart';
+import '../features/document_import/presentation/pdf_import_flow.dart';
 import '../shared/theme/memo_theme.dart';
 
 class MemoMindApp extends StatefulWidget {
@@ -18,7 +18,7 @@ class MemoMindApp extends StatefulWidget {
 }
 
 class _MemoMindAppState extends State<MemoMindApp> {
-  late final DocumentImportRepository _importRepository;
+  late final LocalDocumentImportRepository _importRepository;
   late final Future<void> _recovery;
 
   @override
@@ -65,6 +65,14 @@ class _MemoMindAppState extends State<MemoMindApp> {
           );
         }
 
+        void startPdfImport() {
+          Navigator.of(context).push(
+            MaterialPageRoute<void>(
+              builder: (_) => PdfImportFlow(repository: _importRepository),
+            ),
+          );
+        }
+
         return FutureBuilder<void>(
           future: _recovery,
           builder: (context, snapshot) {
@@ -96,7 +104,7 @@ class _MemoMindAppState extends State<MemoMindApp> {
                     case ImportSource.gallery:
                       return startImageImport(DocumentImageSource.gallery);
                     case ImportSource.pdf:
-                      return showUnimplemented('Nhập PDF');
+                      return startPdfImport();
                     case ImportSource.manualDeck:
                       return showUnimplemented('Tạo deck thủ công');
                   }

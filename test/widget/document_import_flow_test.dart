@@ -44,8 +44,11 @@ class _FakeRepository implements DocumentImportRepository {
           pageId: 'page-1',
           documentId: 'document-1',
           pageNumber: 1,
-          source: candidate.source,
-          originalRelativePath: 'documents/document-1/originals/page-1.jpg',
+          originalPageNumber: 1,
+          source: candidate.source == DocumentImageSource.camera
+              ? DocumentPageSource.camera
+              : DocumentPageSource.gallery,
+          dataRelativePath: 'documents/document-1/pages/page-1.jpg',
           absolutePath: 'missing-test-file.jpg',
           mimeType: inspection.mimeType,
           fileSizeBytes: inspection.fileSizeBytes,
