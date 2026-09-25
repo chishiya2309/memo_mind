@@ -4,10 +4,29 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import '../features/home/data/demo_home_data.dart';
 import '../features/home/domain/home_dashboard_data.dart';
 import '../features/home/presentation/home_screen.dart';
+import '../features/document_import/data/local_document_import_repository.dart';
+import '../features/document_import/domain/document_import_models.dart';
+import '../features/document_import/domain/document_import_repository.dart';
+import '../features/document_import/presentation/document_import_flow.dart';
 import '../shared/theme/memo_theme.dart';
 
-class MemoMindApp extends StatelessWidget {
+class MemoMindApp extends StatefulWidget {
   const MemoMindApp({super.key});
+
+  @override
+  State<MemoMindApp> createState() => _MemoMindAppState();
+}
+
+class _MemoMindAppState extends State<MemoMindApp> {
+  late final DocumentImportRepository _importRepository;
+  late final Future<void> _recovery;
+
+  @override
+  void initState() {
+    super.initState();
+    _importRepository = LocalDocumentImportRepository();
+    _recovery = _importRepository.recoverInterruptedImports();
+  }
 
   @override
   Widget build(BuildContext context) => MaterialApp(
@@ -35,29 +54,56 @@ class MemoMindApp extends StatelessWidget {
           );
         }
 
-        return HomeScreen(
-          data: demoHomeDashboard(),
-          actions: HomeActions(
-            onStartReview: () => openPlaceholder('Phiên ôn tập'),
-            onFreeReview: () => openPlaceholder('Ôn tự do'),
-            onOpenDueDecks: () => openPlaceholder('Bộ thẻ đến hạn'),
-            onOpenDeck: (_) => openPlaceholder('Chi tiết bộ thẻ'),
-            onStartDeckReview: (_) => openPlaceholder('Phiên ôn bộ thẻ'),
-            onOpenDocument: (_) => openPlaceholder('Chi tiết tài liệu'),
-            onOpenStatistics: () => openPlaceholder('Thống kê'),
-            onOpenLibrary: () => openPlaceholder('Thư viện'),
-            onOpenProfile: () => openPlaceholder('Cá nhân'),
-            onOpenApprovals: () => openPlaceholder('Duyệt thẻ AI'),
-            onOpenJob: (_) => openPlaceholder('Tác vụ học liệu'),
-            onRetrySync: () => showUnimplemented('Đồng bộ'),
-            onRetryLoad: () => showUnimplemented('Tải dữ liệu'),
-            onImport: (source) => showUnimplemented(switch (source) {
-              ImportSource.camera => 'Chụp bài giảng',
-              ImportSource.gallery => 'Chọn ảnh',
-              ImportSource.pdf => 'Nhập PDF',
-              ImportSource.manualDeck => 'Tạo deck thủ công',
-            }),
-          ),
+        void startImageImport(DocumentImageSource source) {
+          Navigator.of(context).push(
+            MaterialPageRoute<void>(
+              builder: (_) => DocumentImportFlow(
+                initialSource: source,
+                repository: _importRepository,
+              ),
+            ),
+          );
+        }
+
+        return FutureBuilder<void>(
+          future: _recovery,
+          builder: (context, snapshot) {
+            if (snapshot.connectionState != ConnectionState.done) {
+              return const Scaffold(
+                body: Center(child: CircularProgressIndicator()),
+              );
+            }
+            return HomeScreen(
+              data: demoHomeDashboard(),
+              actions: HomeActions(
+                onStartReview: () => openPlaceholder('Phiên ôn tập'),
+                onFreeReview: () => openPlaceholder('Ôn tự do'),
+                onOpenDueDecks: () => openPlaceholder('Bộ thẻ đến hạn'),
+                onOpenDeck: (_) => openPlaceholder('Chi tiết bộ thẻ'),
+                onStartDeckReview: (_) => openPlaceholder('Phiên ôn bộ thẻ'),
+                onOpenDocument: (_) => openPlaceholder('Chi tiết tài liệu'),
+                onOpenStatistics: () => openPlaceholder('Thống kê'),
+                onOpenLibrary: () => openPlaceholder('Thư viện'),
+                onOpenProfile: () => openPlaceholder('Cá nhân'),
+                onOpenApprovals: () => openPlaceholder('Duyệt thẻ AI'),
+                onOpenJob: (_) => openPlaceholder('Tác vụ học liệu'),
+                onRetrySync: () => showUnimplemented('Đồng bộ'),
+                onRetryLoad: () => showUnimplemented('Tải dữ liệu'),
+                onImport: (source) {
+                  switch (source) {
+                    case ImportSource.camera:
+                      return startImageImport(DocumentImageSource.camera);
+                    case ImportSource.gallery:
+                      return startImageImport(DocumentImageSource.gallery);
+                    case ImportSource.pdf:
+                      return showUnimplemented('Nhập PDF');
+                    case ImportSource.manualDeck:
+                      return showUnimplemented('Tạo deck thủ công');
+                  }
+                },
+              ),
+            );
+          },
         );
       },
     ),
