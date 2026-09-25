@@ -1,10 +1,10 @@
 # MemoMind AI
 
-MemoMind AI is an Android-focused Flutter project for turning short lecture documents into source-linked study cards and reviewing them offline. The app currently opens an interactive home screen with sample data. SQLite, Firebase, OCR, and review sessions are planned, not yet implemented.
+MemoMind AI is an Android-focused Flutter project for turning short lecture documents into source-linked study cards and reviewing them offline. The app currently includes an interactive home screen and an offline-first camera/gallery document-import flow. OCR, Firebase sync, and review sessions are planned, not yet implemented.
 
 ## Architecture
 
-- The planned data flow reads and writes study data through SQLite (`sqflite`). The UI will not query Firestore as its primary data source.
+- Imported documents and source-page metadata are stored through SQLite (`sqflite`). Future study data will use the same local-first boundary; the UI will not query Firestore as its primary data source.
 - Firebase Authentication, Firestore, App Check, and Firebase AI Logic are planned for identity, cloud sync, and AI generation. Firestore will be a cloud replica.
 - OCR will run on the device. A user will confirm extracted text and review generated cards before saving them.
 - Review events will be immutable. The SM-2 scheduler will belong in pure Dart domain code, independent of Flutter, SQLite, and Firebase.
@@ -50,7 +50,7 @@ Each P0 feature has `presentation`, `application`, `domain`, and `data` director
 
 ## Delivery stages
 
-- **P0:** Local deck and card management, document import, on-device OCR and correction, source-linked AI material generation through Firebase AI Logic, offline review, local reminders and statistics. The `sync` directory reserves the boundary for cloud replication.
+- **P0:** Camera/gallery document import is implemented with private app storage and SQLite metadata. Local deck and card management, on-device OCR and correction, source-linked AI material generation through Firebase AI Logic, offline review, local reminders and statistics remain planned. The `sync` directory reserves the boundary for cloud replication.
 - **P1:** Cloud Functions, original-file backup in Cloud Storage, multi-device sync, private deck sharing, and push notifications. The corresponding directories are placeholders only.
 
 ## Getting started and collaborating
