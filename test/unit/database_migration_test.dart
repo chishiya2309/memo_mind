@@ -124,6 +124,88 @@ void main() {
       expect(pdfPage['original_page_number'], 7);
       expect(pdfPage['normalization_status'], 'source_ready');
       expect(await db.query('page_normalizations'), isEmpty);
+
+      // Migrate to V4 (OCR and SourceBlocks)
+      await MemoMindDatabase.migrateV3ToV4(db);
+
+      // Update document to pending_ocr_review and ready_for_generation
+      await db.update(
+        'documents',
+        {'status': 'pending_ocr_review'},
+        where: 'document_id = ?',
+        whereArgs: ['image-document'],
+      );
+
+      final updatedDoc = (await db.query(
+        'documents',
+        where: 'document_id = ?',
+        whereArgs: ['image-document'],
+      )).single;
+      expect(updatedDoc['status'], 'pending_ocr_review');
+
+      // Insert OCR page result
+      await db.insert('ocr_page_results', {
+        'page_id': 'image-page',
+        'document_id': 'image-document',
+        'status': 'completed',
+        'recognized_language': 'vi',
+        'raw_full_text': 'Nội dung tiếng Việt',
+        'updated_at': 3,
+      });
+
+      // Insert source block
+      await db.insert('source_blocks', {
+        'block_id': 'block-1',
+        'document_id': 'image-document',
+        'page_id': 'image-page',
+        'page_number': 1,
+        'order_index': 0,
+        'raw_text': 'Nội dung tiếng Việt',
+        'normalized_text': 'Nội dung tiếng Việt đã sửa',
+        'box_left': 0.1,
+        'box_top': 0.2,
+        'box_width': 0.5,
+        'box_height': 0.3,
+        'has_valid_box': 1,
+        'confidence': 0.92,
+        'confidence_source': 'mlkit',
+        'status': 'draft',
+        'created_at': 3,
+        'updated_at': 3,
+      });
+
+      final blocks = await db.query(
+        'source_blocks',
+        where: 'page_id = ?',
+        whereArgs: ['image-page'],
+      );
+      expect(blocks.length, 1);
+      expect(blocks.first['raw_text'], 'Nội dung tiếng Việt');
+      expect(blocks.first['normalized_text'], 'Nội dung tiếng Việt đã sửa');
+      expect(blocks.first['confidence'], 0.92);
+
+      // Test cascade delete
+      await db.delete(
+        'documents',
+        where: 'document_id = ?',
+        whereArgs: ['image-document'],
+      );
+      expect(
+        await db.query(
+          'source_blocks',
+          where: 'document_id = ?',
+          whereArgs: ['image-document'],
+        ),
+        isEmpty,
+      );
+      expect(
+        await db.query(
+          'ocr_page_results',
+          where: 'document_id = ?',
+          whereArgs: ['image-document'],
+        ),
+        isEmpty,
+      );
     },
   );
 }

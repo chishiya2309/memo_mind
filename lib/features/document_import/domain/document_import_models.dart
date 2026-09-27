@@ -6,7 +6,12 @@ enum DocumentImageSource { camera, gallery }
 
 enum DocumentPageSource { camera, gallery, pdf }
 
-enum ImportedDocumentStatus { pendingProcessing, pendingOcr }
+enum ImportedDocumentStatus {
+  pendingProcessing,
+  pendingOcr,
+  pendingOcrReview,
+  readyForGeneration,
+}
 
 enum DocumentPrivacy { private }
 

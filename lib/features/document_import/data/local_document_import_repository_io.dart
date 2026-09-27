@@ -656,6 +656,8 @@ class LocalDocumentImportRepository
 
   ImportedDocumentStatus _status(String value) => switch (value) {
     'pending_ocr' => ImportedDocumentStatus.pendingOcr,
+    'pending_ocr_review' => ImportedDocumentStatus.pendingOcrReview,
+    'ready_for_generation' => ImportedDocumentStatus.readyForGeneration,
     _ => ImportedDocumentStatus.pendingProcessing,
   };
 
