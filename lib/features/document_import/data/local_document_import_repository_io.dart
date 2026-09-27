@@ -9,6 +9,7 @@ import 'package:uuid/uuid.dart';
 import '../../../core/database/memo_mind_database.dart';
 import '../domain/document_import_models.dart';
 import '../domain/document_import_repository.dart';
+import '../../image_normalization/domain/image_normalization_models.dart';
 
 typedef DirectoryProvider = Future<Directory> Function();
 typedef AvailableBytesProvider = Future<int?> Function(String path);
@@ -160,9 +161,11 @@ class LocalDocumentImportRepository
           'quality_code': inspection.qualityCode,
           'quality_warning_accepted': qualityWarningAccepted ? 1 : 0,
           'created_at': now.millisecondsSinceEpoch,
+          'normalization_status': 'pending',
         });
         await txn.rawUpdate(
-          'UPDATE documents SET page_count = page_count + 1, updated_at = ? '
+          "UPDATE documents SET page_count = page_count + 1, "
+          "status = 'pending_processing', updated_at = ? "
           'WHERE document_id = ?',
           [now.millisecondsSinceEpoch, documentId],
         );
@@ -292,6 +295,7 @@ class LocalDocumentImportRepository
             'quality_code': 'not_inspected',
             'quality_warning_accepted': 0,
             'created_at': now.millisecondsSinceEpoch,
+            'normalization_status': 'source_ready',
           });
         }
       });
@@ -360,11 +364,34 @@ class LocalDocumentImportRepository
       );
     }
     final support = await _supportDirectory();
-    final pages = await db.query(
-      'source_pages',
-      where: 'document_id = ?',
-      whereArgs: [documentId],
-      orderBy: 'page_number ASC',
+    final pages = await db.rawQuery(
+      '''
+      SELECT source_pages.*,
+        page_normalizations.revision AS normalized_revision,
+        page_normalizations.normalized_relative_path,
+        page_normalizations.mime_type AS normalized_mime_type,
+        page_normalizations.file_size_bytes AS normalized_file_size_bytes,
+        page_normalizations.width AS normalized_width,
+        page_normalizations.height AS normalized_height,
+        page_normalizations.sha256 AS normalized_sha256,
+        page_normalizations.top_left_x,
+        page_normalizations.top_left_y,
+        page_normalizations.top_right_x,
+        page_normalizations.top_right_y,
+        page_normalizations.bottom_right_x,
+        page_normalizations.bottom_right_y,
+        page_normalizations.bottom_left_x,
+        page_normalizations.bottom_left_y,
+        page_normalizations.rotation_degrees,
+        page_normalizations.contrast,
+        page_normalizations.updated_at AS normalization_updated_at
+      FROM source_pages
+      LEFT JOIN page_normalizations
+        ON page_normalizations.page_id = source_pages.page_id
+      WHERE source_pages.document_id = ?
+      ORDER BY source_pages.page_number ASC
+    ''',
+      [documentId],
     );
     final row = documents.single;
     return ImportedDocument(
@@ -397,6 +424,54 @@ class LocalDocumentImportRepository
       qualityCode: row['quality_code']! as String,
       qualityWarningAccepted: (row['quality_warning_accepted']! as int) == 1,
       createdAt: DateTime.fromMillisecondsSinceEpoch(row['created_at']! as int),
+      normalizationStatus: _normalizationStatus(
+        row['normalization_status']! as String,
+      ),
+      normalizedAsset: _mapNormalizedAsset(row, supportPath),
+    );
+  }
+
+  NormalizedPageAsset? _mapNormalizedAsset(
+    Map<String, Object?> row,
+    String supportPath,
+  ) {
+    final relativePath = row['normalized_relative_path'] as String?;
+    if (relativePath == null) return null;
+    return NormalizedPageAsset(
+      pageId: row['page_id']! as String,
+      revision: row['normalized_revision']! as int,
+      relativePath: relativePath,
+      absolutePath: _resolveRelative(supportPath, relativePath).path,
+      mimeType: row['normalized_mime_type']! as String,
+      fileSizeBytes: row['normalized_file_size_bytes']! as int,
+      width: row['normalized_width']! as int,
+      height: row['normalized_height']! as int,
+      sha256: row['normalized_sha256']! as String,
+      parameters: NormalizationParameters(
+        corners: CropQuadrilateral(
+          topLeft: NormalizedPoint(
+            (row['top_left_x']! as num).toDouble(),
+            (row['top_left_y']! as num).toDouble(),
+          ),
+          topRight: NormalizedPoint(
+            (row['top_right_x']! as num).toDouble(),
+            (row['top_right_y']! as num).toDouble(),
+          ),
+          bottomRight: NormalizedPoint(
+            (row['bottom_right_x']! as num).toDouble(),
+            (row['bottom_right_y']! as num).toDouble(),
+          ),
+          bottomLeft: NormalizedPoint(
+            (row['bottom_left_x']! as num).toDouble(),
+            (row['bottom_left_y']! as num).toDouble(),
+          ),
+        ),
+        rotationDegrees: row['rotation_degrees']! as int,
+        contrast: (row['contrast']! as num).toDouble(),
+      ),
+      updatedAt: DateTime.fromMillisecondsSinceEpoch(
+        row['normalization_updated_at']! as int,
+      ),
     );
   }
 
@@ -422,6 +497,9 @@ class LocalDocumentImportRepository
     await _deleteDirectory(Directory(p.join(cache.path, 'document_import')));
 
     final support = await _supportDirectory();
+    await _deleteDirectory(
+      Directory(p.join(support.path, '.staging', 'image_normalization')),
+    );
     final db = await _database.database;
     final documentRows = await db.query('documents');
     final pageRows = await db.query('source_pages');
@@ -430,6 +508,7 @@ class LocalDocumentImportRepository
     };
     final invalidPdfDocuments = <String>{};
     final missingImagePages = <String>[];
+    final missingNormalizations = <String>[];
     for (final entry in documents.entries) {
       final relative = entry.value['original_file_relative_path'] as String?;
       if (relative == null) continue;
@@ -451,7 +530,33 @@ class LocalDocumentImportRepository
       }
     }
 
+    final normalizationRows = await db.query('page_normalizations');
+    for (final normalization in normalizationRows) {
+      final relative = normalization['normalized_relative_path']! as String;
+      if (!await _resolveRelative(support.path, relative).exists()) {
+        missingNormalizations.add(normalization['page_id']! as String);
+      }
+    }
+
     await db.transaction((txn) async {
+      for (final pageId in missingNormalizations) {
+        await txn.delete(
+          'page_normalizations',
+          where: 'page_id = ?',
+          whereArgs: [pageId],
+        );
+        await txn.rawUpdate(
+          '''
+          UPDATE source_pages
+          SET normalization_status = CASE
+            WHEN source = 'pdf' THEN 'source_ready'
+            ELSE 'pending'
+          END
+          WHERE page_id = ?
+        ''',
+          [pageId],
+        );
+      }
       for (final pageId in missingImagePages) {
         await txn.delete(
           'source_pages',
@@ -474,6 +579,17 @@ class LocalDocumentImportRepository
         )
       ''');
       await txn.delete('documents', where: 'page_count = 0');
+      await txn.rawUpdate('''
+        UPDATE documents
+        SET status = CASE
+          WHEN EXISTS (
+            SELECT 1 FROM source_pages
+            WHERE source_pages.document_id = documents.document_id
+              AND normalization_status = 'pending'
+          ) THEN 'pending_processing'
+          ELSE 'pending_ocr'
+        END
+      ''');
     });
 
     final referenced = <String>{};
@@ -485,6 +601,10 @@ class LocalDocumentImportRepository
       'source_pages',
       columns: ['data_relative_path'],
     );
+    final remainingNormalizations = await db.query(
+      'page_normalizations',
+      columns: ['normalized_relative_path'],
+    );
     for (final row in remainingDocuments) {
       final relative = row['original_file_relative_path'] as String?;
       if (relative != null) {
@@ -495,6 +615,12 @@ class LocalDocumentImportRepository
     }
     for (final row in remainingPages) {
       final relative = row['data_relative_path']! as String;
+      referenced.add(
+        p.normalize(_resolveRelative(support.path, relative).path),
+      );
+    }
+    for (final row in remainingNormalizations) {
+      final relative = row['normalized_relative_path']! as String;
       referenced.add(
         p.normalize(_resolveRelative(support.path, relative).path),
       );
@@ -531,6 +657,12 @@ class LocalDocumentImportRepository
   ImportedDocumentStatus _status(String value) => switch (value) {
     'pending_ocr' => ImportedDocumentStatus.pendingOcr,
     _ => ImportedDocumentStatus.pendingProcessing,
+  };
+
+  PageNormalizationStatus _normalizationStatus(String value) => switch (value) {
+    'ready' => PageNormalizationStatus.ready,
+    'source_ready' => PageNormalizationStatus.sourceReady,
+    _ => PageNormalizationStatus.pending,
   };
 
   String _pdfTitle(String fileName) {

@@ -14,7 +14,7 @@ void main() {
     () async {
       final db = await databaseFactoryFfi.openDatabase(inMemoryDatabasePath);
       await db.execute('PRAGMA foreign_keys = ON');
-      await MemoMindDatabase.createV2(db);
+      await MemoMindDatabase.createV3(db);
       final root = await Directory.systemTemp.createTemp('memo-mind-pdf-test-');
       final support = Directory('${root.path}/support');
       final cache = Directory('${root.path}/cache');
@@ -87,7 +87,7 @@ void main() {
   test('database failure removes copied PDF files and document row', () async {
     final db = await databaseFactoryFfi.openDatabase(inMemoryDatabasePath);
     await db.execute('PRAGMA foreign_keys = ON');
-    await MemoMindDatabase.createV2(db);
+    await MemoMindDatabase.createV3(db);
     final root = await Directory.systemTemp.createTemp(
       'memo-mind-rollback-test-',
     );

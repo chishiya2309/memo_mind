@@ -6,7 +6,7 @@ void main() {
   setUpAll(sqfliteFfiInit);
 
   test(
-    'version 1 image data migrates and version 2 accepts PDF metadata',
+    'version 1 data migrates through v3 with normalization defaults',
     () async {
       final db = await databaseFactoryFfi.openDatabase(inMemoryDatabasePath);
       addTearDown(db.close);
@@ -71,6 +71,7 @@ void main() {
       });
 
       await MemoMindDatabase.migrateV1ToV2(db);
+      await MemoMindDatabase.migrateV2ToV3(db);
 
       final migrated = (await db.query('source_pages')).single;
       expect(migrated['original_page_number'], 1);
@@ -79,6 +80,7 @@ void main() {
         'documents/image-document/pages/page.jpg',
       );
       expect(migrated['source'], 'gallery');
+      expect(migrated['normalization_status'], 'pending');
 
       await db.insert('documents', {
         'document_id': 'pdf-document',
@@ -110,6 +112,7 @@ void main() {
         'quality_code': 'not_inspected',
         'quality_warning_accepted': 0,
         'created_at': 2,
+        'normalization_status': 'source_ready',
       });
 
       final pdfPage = (await db.query(
@@ -119,6 +122,8 @@ void main() {
       )).single;
       expect(pdfPage['source'], 'pdf');
       expect(pdfPage['original_page_number'], 7);
+      expect(pdfPage['normalization_status'], 'source_ready');
+      expect(await db.query('page_normalizations'), isEmpty);
     },
   );
 }

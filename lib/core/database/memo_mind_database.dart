@@ -16,11 +16,12 @@ class MemoMindDatabase {
     final root = await getDatabasesPath();
     return openDatabase(
       p.join(root, 'memo_mind.db'),
-      version: 2,
+      version: 3,
       onConfigure: (db) async => db.execute('PRAGMA foreign_keys = ON'),
-      onCreate: (db, version) => createV2(db),
+      onCreate: (db, version) => createV3(db),
       onUpgrade: (db, oldVersion, newVersion) async {
         if (oldVersion < 2) await migrateV1ToV2(db);
+        if (oldVersion < 3) await migrateV2ToV3(db);
       },
     );
   }
@@ -112,6 +113,59 @@ class MemoMindDatabase {
     ''');
     await db.execute('DROP TABLE source_pages_v1');
     await db.execute('DROP TABLE documents_v1');
+  }
+
+  static Future<void> createV3(DatabaseExecutor db) async {
+    await createV2(db);
+    await _addNormalizationSchema(db);
+  }
+
+  static Future<void> migrateV2ToV3(Database db) async {
+    await _addNormalizationSchema(db);
+  }
+
+  static Future<void> _addNormalizationSchema(DatabaseExecutor db) async {
+    await db.execute('''
+      ALTER TABLE source_pages ADD COLUMN normalization_status TEXT NOT NULL
+      DEFAULT 'pending'
+      CHECK(normalization_status IN ('pending', 'ready', 'source_ready'))
+    ''');
+    await db.execute('''
+      UPDATE source_pages
+      SET normalization_status = CASE
+        WHEN source = 'pdf' THEN 'source_ready'
+        ELSE 'pending'
+      END
+    ''');
+    await db.execute('''
+      CREATE TABLE page_normalizations (
+        page_id TEXT PRIMARY KEY,
+        revision INTEGER NOT NULL CHECK(revision > 0),
+        normalized_relative_path TEXT NOT NULL UNIQUE,
+        mime_type TEXT NOT NULL CHECK(mime_type = 'image/png'),
+        file_size_bytes INTEGER NOT NULL CHECK(file_size_bytes > 0),
+        width INTEGER NOT NULL CHECK(width > 0),
+        height INTEGER NOT NULL CHECK(height > 0),
+        sha256 TEXT NOT NULL,
+        top_left_x REAL NOT NULL CHECK(top_left_x BETWEEN 0 AND 1),
+        top_left_y REAL NOT NULL CHECK(top_left_y BETWEEN 0 AND 1),
+        top_right_x REAL NOT NULL CHECK(top_right_x BETWEEN 0 AND 1),
+        top_right_y REAL NOT NULL CHECK(top_right_y BETWEEN 0 AND 1),
+        bottom_right_x REAL NOT NULL CHECK(bottom_right_x BETWEEN 0 AND 1),
+        bottom_right_y REAL NOT NULL CHECK(bottom_right_y BETWEEN 0 AND 1),
+        bottom_left_x REAL NOT NULL CHECK(bottom_left_x BETWEEN 0 AND 1),
+        bottom_left_y REAL NOT NULL CHECK(bottom_left_y BETWEEN 0 AND 1),
+        rotation_degrees INTEGER NOT NULL
+          CHECK(rotation_degrees IN (0, 90, 180, 270)),
+        contrast REAL NOT NULL CHECK(contrast BETWEEN -0.5 AND 0.5),
+        updated_at INTEGER NOT NULL,
+        FOREIGN KEY(page_id) REFERENCES source_pages(page_id) ON DELETE CASCADE
+      )
+    ''');
+    await db.execute(
+      'CREATE INDEX idx_page_normalizations_path '
+      'ON page_normalizations(normalized_relative_path)',
+    );
   }
 
   Future<void> close() async {
