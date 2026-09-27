@@ -1,5 +1,7 @@
 import 'dart:typed_data';
 
+import '../../image_normalization/domain/image_normalization_models.dart';
+
 enum DocumentImageSource { camera, gallery }
 
 enum DocumentPageSource { camera, gallery, pdf }
@@ -143,6 +145,8 @@ class SourcePage {
     required this.qualityCode,
     required this.qualityWarningAccepted,
     required this.createdAt,
+    this.normalizationStatus = PageNormalizationStatus.pending,
+    this.normalizedAsset,
   });
 
   final String pageId;
@@ -160,6 +164,10 @@ class SourcePage {
   final String qualityCode;
   final bool qualityWarningAccepted;
   final DateTime createdAt;
+  final PageNormalizationStatus normalizationStatus;
+  final NormalizedPageAsset? normalizedAsset;
+
+  String get displayPath => normalizedAsset?.absolutePath ?? absolutePath;
 }
 
 class ImportedDocument {

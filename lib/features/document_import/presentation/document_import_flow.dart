@@ -2,12 +2,16 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../../../shared/theme/memo_theme.dart';
+import '../../image_normalization/presentation/document_normalization_overview.dart';
 import '../application/image_inspector.dart';
 import '../data/gallery_image_picker.dart';
 import '../domain/document_import_models.dart';
 import '../domain/document_import_repository.dart';
 import 'document_camera_screen.dart';
 import 'stored_image.dart';
+
+export '../../image_normalization/presentation/document_normalization_overview.dart'
+    show PendingProcessingScreen;
 
 class DocumentImportFlow extends StatefulWidget {
   const DocumentImportFlow({
@@ -348,7 +352,10 @@ class _DocumentImportFlowState extends State<DocumentImportFlow> {
     widget.onContinue?.call(document);
     Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (_) => PendingProcessingScreen(document: document),
+        builder: (_) => PendingProcessingScreen(
+          document: document,
+          documentRepository: widget.repository,
+        ),
       ),
     );
   }
@@ -665,79 +672,4 @@ class _ImageSourceSheet extends StatelessWidget {
       ],
     ),
   );
-}
-
-class PendingProcessingScreen extends StatelessWidget {
-  const PendingProcessingScreen({super.key, required this.document});
-
-  final ImportedDocument document;
-
-  @override
-  Widget build(BuildContext context) {
-    final p = MemoPalette.of(context);
-    final isPdf = document.originalFile != null;
-    return Scaffold(
-      appBar: AppBar(title: const Text('Tài liệu đã nhập')),
-      body: Center(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(24),
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 520),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Container(
-                  width: 72,
-                  height: 72,
-                  decoration: BoxDecoration(
-                    color: p.hero,
-                    shape: BoxShape.circle,
-                  ),
-                  child: Icon(
-                    Icons.schedule_rounded,
-                    color: p.primary,
-                    size: 36,
-                  ),
-                ),
-                const SizedBox(height: 20),
-                Text(
-                  isPdf ? 'Tài liệu đang chờ OCR' : 'Tài liệu đang chờ xử lý',
-                  textAlign: TextAlign.center,
-                  style: Theme.of(context).textTheme.headlineSmall,
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  isPdf
-                      ? 'PDF gốc và ${document.pages.length} trang đã chọn được lưu an toàn trên thiết bị. OCR sẽ được nối vào bước tiếp theo.'
-                      : '${document.pages.length} trang ảnh gốc đã được lưu an toàn trên thiết bị. OCR sẽ được nối vào bước tiếp theo.',
-                  textAlign: TextAlign.center,
-                  style: Theme.of(context).textTheme.bodyMedium,
-                ),
-                const SizedBox(height: 20),
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: p.surfaceMuted,
-                    borderRadius: BorderRadius.circular(14),
-                  ),
-                  child: SelectableText(
-                    'documentId: ${document.documentId}',
-                    style: Theme.of(context).textTheme.bodySmall,
-                  ),
-                ),
-                const SizedBox(height: 24),
-                FilledButton.icon(
-                  onPressed: () =>
-                      Navigator.of(context).popUntil((route) => route.isFirst),
-                  icon: const Icon(Icons.home_outlined),
-                  label: const Text('Về trang chủ'),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
 }
