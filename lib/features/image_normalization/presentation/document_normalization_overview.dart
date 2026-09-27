@@ -15,6 +15,7 @@ import '../data/document_scan_engine.dart';
 import '../data/local_image_normalization_repository.dart';
 import '../domain/image_normalization_models.dart';
 import '../domain/image_normalization_repository.dart';
+import '../../ocr_editor/presentation/ocr_page_selection_screen.dart';
 
 class PendingProcessingScreen extends StatefulWidget {
   const PendingProcessingScreen({
@@ -89,7 +90,9 @@ class _PendingProcessingScreenState extends State<PendingProcessingScreen> {
     widget.onRecognizeText?.call(_document);
     if (widget.onRecognizeText != null) return;
     Navigator.of(context).push(
-      MaterialPageRoute<void>(builder: (_) => const _OcrPlaceholderScreen()),
+      MaterialPageRoute<void>(
+        builder: (_) => OcrPageSelectionScreen(document: _document),
+      ),
     );
   }
 
@@ -968,34 +971,4 @@ class _CropOverlayPainter extends CustomPainter {
       oldDelegate.rect != rect ||
       oldDelegate.corners != corners ||
       oldDelegate.valid != valid;
-}
-
-class _OcrPlaceholderScreen extends StatelessWidget {
-  const _OcrPlaceholderScreen();
-
-  @override
-  Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: const Text('Nhận dạng văn bản')),
-    body: Center(
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              Icons.text_snippet_outlined,
-              size: 48,
-              color: MemoPalette.of(context).primary,
-            ),
-            const SizedBox(height: 16),
-            Text(
-              'Tài liệu đã sẵn sàng. FR04 OCR chưa được triển khai.',
-              textAlign: TextAlign.center,
-              style: Theme.of(context).textTheme.titleSmall,
-            ),
-          ],
-        ),
-      ),
-    ),
-  );
 }
