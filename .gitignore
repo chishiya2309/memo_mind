@@ -54,3 +54,23 @@ app.*.map.json
 **/serviceAccountKey.json
 **/service-account*.json
 **/firebase-adminsdk-*.json
+
+# Node.js / Backend functions
+**/node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Firebase CLI
+.firebase/
+firebase-debug.log*
+firebase-debug.*.log*
+firestore-debug.log*
+ui-debug.log*
+**/functions/.runtimeconfig.json
+
+# Local Android & Build outputs
+android/local.properties
+*.apk
+*.aab
+

@@ -11,6 +11,7 @@ import '../domain/ocr_models.dart';
 import '../domain/ocr_repository.dart';
 import 'widgets/bounding_box_painter.dart';
 import 'widgets/gemini_assist_dialogs.dart';
+import '../../material_generation/presentation/material_generation_flow.dart';
 
 enum _BlockFilter { all, needsReview, edited }
 
@@ -461,38 +462,36 @@ class _OcrDualViewEditorScreenState extends State<OcrDualViewEditorScreen> {
 
     if (!mounted) return;
 
-    // Luồng 19: Hiển thị lựa chọn tạo học liệu ngay hay để sau
-    await showDialog<void>(
+    final shouldStartAi = await showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
+      builder: (dialogContext) => AlertDialog(
         title: const Text('OCR đã được xác nhận!'),
         content: const Text(
           'Tài liệu đã ở trạng thái "Sẵn sàng tạo học liệu". Bạn có muốn tạo flashcard và câu hỏi ngay không?',
         ),
         actions: [
           TextButton(
-            onPressed: () {
-              Navigator.pop(context);
-              Navigator.of(context).popUntil((route) => route.isFirst);
-            },
+            onPressed: () => Navigator.pop(dialogContext, false),
             child: const Text('Để sau'),
           ),
           FilledButton.icon(
             icon: const Icon(Icons.auto_awesome),
             label: const Text('Tạo học liệu AI'),
-            onPressed: () {
-              Navigator.pop(context);
-              Navigator.of(context).popUntil((route) => route.isFirst);
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('Chức năng tạo học liệu AI sẽ tiếp nhận dữ liệu đã xác nhận.'),
-                ),
-              );
-            },
+            onPressed: () => Navigator.pop(dialogContext, true),
           ),
         ],
       ),
     );
+
+    if (shouldStartAi == true && mounted) {
+      await MaterialGenerationFlow.start(
+        context: context,
+        document: widget.document,
+        ocrRepository: _repository,
+      );
+    } else if (mounted) {
+      Navigator.of(context).popUntil((route) => route.isFirst);
+    }
   }
 
   Future<void> _reloadSilently() async {
