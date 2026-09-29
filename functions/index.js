@@ -38,16 +38,16 @@ const app = express();
 app.use(cors({ origin: true }));
 app.use(express.json({ limit: '2mb' }));
 
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-const GEMINI_MODEL = process.env.GEMINI_MODEL;
+const GROQ_API_KEY = process.env.GROQ_API_KEY || process.env.GEMINI_API_KEY;
+const GROQ_MODEL = process.env.GROQ_MODEL || process.env.GEMINI_MODEL || 'openai/gpt-oss-20b';
 const MAX_TOTAL_CHARACTERS = 100000; // Limit for a single batch request (Luồng 8a)
 
 app.get(['/health', '/api/health'], (req, res) => {
   res.json({
     status: 'ok',
-    service: 'MemoMind AI Generation Backend',
-    model: GEMINI_MODEL,
-    hasApiKey: Boolean(GEMINI_API_KEY),
+    service: 'MemoMind AI Generation Backend (Groq)',
+    model: GROQ_MODEL,
+    hasApiKey: Boolean(GROQ_API_KEY),
   });
 });
 
@@ -90,34 +90,58 @@ function deduplicateCards(cards) {
 }
 
 /**
- * JSON Schema for Gemini Structured Output
+ * JSON Schema for Groq Structured Output (strict: true)
+ * Requires top-level object, additionalProperties: false, and all fields in required array.
  */
 const FLASHCARD_RESPONSE_SCHEMA = {
-  type: 'ARRAY',
-  items: {
-    type: 'OBJECT',
-    properties: {
-      type: { type: 'STRING', enum: ['flashcard'] },
-      format: { type: 'STRING', enum: ['qa', 'cloze'] },
-      question: { type: 'STRING' },
-      answer: { type: 'STRING' },
-      sourcePage: { type: 'INTEGER' },
-      sourceBlockId: { type: 'STRING' },
-      sourceQuote: { type: 'STRING' },
-      confidence: { type: 'NUMBER' }
-    },
-    required: ['type', 'format', 'question', 'answer', 'sourcePage', 'sourceBlockId', 'sourceQuote', 'confidence']
-  }
+  "type": "object",
+  "properties": {
+    "cards": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": ["flashcard"]
+          },
+          "format": {
+            "type": "string",
+            "enum": ["qa", "cloze"]
+          },
+          "question": { "type": "string" },
+          "answer": { "type": "string" },
+          "sourcePage": { "type": "integer" },
+          "sourceBlockId": { "type": "string" },
+          "sourceQuote": { "type": "string" },
+          "confidence": { "type": "number" }
+        },
+        "required": [
+          "type",
+          "format",
+          "question",
+          "answer",
+          "sourcePage",
+          "sourceBlockId",
+          "sourceQuote",
+          "confidence"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": ["cards"],
+  "additionalProperties": false
 };
 
 /**
  * POST /api/v1/materials/flashcards/generate (also supports /v1/materials/flashcards/generate)
  */
 app.post(['/api/v1/materials/flashcards/generate', '/v1/materials/flashcards/generate'], async (req, res) => {
-  if (!GEMINI_API_KEY) {
+  if (!GROQ_API_KEY) {
     return res.status(503).json({
       error: 'backend_not_configured',
-      message: 'Tính năng AI chưa được cấu hình API Key trên máy chủ. Vui lòng liên hệ nhóm phát triển.'
+      message: 'Tính năng AI chưa được cấu hình GROQ_API_KEY trên máy chủ. Vui lòng kiểm tra file .env.'
     });
   }
 
@@ -175,48 +199,57 @@ Quy tắc bắt buộc:
 5. "type": Luôn bằng "flashcard".`;
 
   const requestBody = {
-    contents: [
-      {
-        parts: [
-          { text: systemPrompt },
-          { text: `Nội dung nguồn tài liệu:\n\n${sourceContext}` }
-        ]
-      }
+    model: GROQ_MODEL,
+    messages: [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: `Nội dung nguồn tài liệu:\n\n${sourceContext}` }
     ],
-    generationConfig: {
-      temperature: 0.2,
-      responseMimeType: 'application/json',
-      responseSchema: FLASHCARD_RESPONSE_SCHEMA
-    }
+    response_format: {
+      type: 'json_schema',
+      json_schema: {
+        name: 'flashcards_response',
+        strict: true,
+        schema: FLASHCARD_RESPONSE_SCHEMA
+      }
+    },
+    temperature: 0.2
   };
 
   try {
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(requestBody)
-      }
-    );
+    const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${GROQ_API_KEY}`
+      },
+      body: JSON.stringify(requestBody)
+    });
 
     if (response.status === 429) {
       return res.status(429).json({
         error: 'quota_exceeded',
-        message: 'Dịch vụ AI tạm thời đã đạt giới hạn sử dụng hoặc quá tải. Vui lòng thử lại sau.'
+        message: 'Dịch vụ Groq AI tạm thời đã đạt giới hạn sử dụng (rate limit). Vui lòng thử lại sau giây lát.'
+      });
+    }
+
+    if (response.status === 401) {
+      return res.status(503).json({
+        error: 'invalid_api_key',
+        message: 'GROQ_API_KEY không hợp lệ hoặc đã hết hạn. Vui lòng kiểm tra file .env.'
       });
     }
 
     if (!response.ok) {
-      console.error(`Gemini API error status: ${response.status}`);
+      const errText = await response.text();
+      console.error(`Groq API error (${response.status}):`, errText);
       return res.status(502).json({
         error: 'llm_service_error',
-        message: 'Không thể kết nối hoặc nhận phản hồi từ dịch vụ AI.'
+        message: `Không thể kết nối hoặc nhận phản hồi từ dịch vụ Groq AI (${response.status}).`
       });
     }
 
     const data = await response.json();
-    const candidateText = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+    const candidateText = data?.choices?.[0]?.message?.content;
     if (!candidateText) {
       return res.status(502).json({
         error: 'empty_llm_response',
@@ -226,7 +259,8 @@ Quy tắc bắt buộc:
 
     let parsedList = [];
     try {
-      parsedList = JSON.parse(candidateText);
+      const parsedData = JSON.parse(candidateText);
+      parsedList = Array.isArray(parsedData) ? parsedData : (parsedData.cards || []);
     } catch (e) {
       return res.status(502).json({
         error: 'invalid_json_format',
@@ -317,9 +351,9 @@ Quy tắc bắt buộc:
 const PORT = process.env.PORT || 8080;
 if (require.main === module) {
   app.listen(PORT, () => {
-    console.log(`MemoMind Backend running on port ${PORT}`);
-    console.log(`API Key: ${GEMINI_API_KEY ? 'Đã nhận (' + GEMINI_API_KEY.substring(0, 6) + '...)' : 'CHƯA CẤU HÌNH'}`);
-    console.log(`Model: ${GEMINI_MODEL}`);
+    console.log(`MemoMind Backend running on port ${PORT} [Provider: Groq]`);
+    console.log(`API Key: ${GROQ_API_KEY ? 'Đã nhận (' + GROQ_API_KEY.substring(0, 8) + '...)' : 'CHƯA CẤU HÌNH'}`);
+    console.log(`Model: ${GROQ_MODEL}`);
   });
 }
 
