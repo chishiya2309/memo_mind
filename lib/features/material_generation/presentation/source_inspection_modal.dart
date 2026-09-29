@@ -1,4 +1,5 @@
 import 'dart:io';
+
 import 'package:flutter/material.dart';
 
 import '../../../shared/theme/memo_theme.dart';
@@ -74,7 +75,11 @@ class SourceInspectionModal extends StatelessWidget {
             padding: const EdgeInsets.symmetric(horizontal: 20),
             child: Row(
               children: [
-                Icon(Icons.visibility_rounded, color: palette.primary, size: 22),
+                Icon(
+                  Icons.visibility_rounded,
+                  color: palette.primary,
+                  size: 22,
+                ),
                 const SizedBox(width: 10),
                 Expanded(
                   child: Column(
@@ -115,9 +120,7 @@ class SourceInspectionModal extends StatelessWidget {
                   width: double.infinity,
                   child: InteractiveViewer(
                     maxScale: 3.0,
-                    child: Center(
-                      child: _buildPageContent(palette),
-                    ),
+                    child: Center(child: _buildPageContent(palette)),
                   ),
                 ),
               ),
@@ -142,10 +145,14 @@ class SourceInspectionModal extends StatelessWidget {
                 children: [
                   Row(
                     children: [
-                      Icon(Icons.format_quote_rounded, size: 18, color: palette.primary),
+                      Icon(
+                        Icons.format_quote_rounded,
+                        size: 18,
+                        color: palette.primary,
+                      ),
                       const SizedBox(width: 6),
                       Text(
-                        'Đoạn văn trích dẫn (sourceQuote):',
+                        'Trích dẫn nguồn:',
                         style: TextStyle(
                           fontSize: 12,
                           fontWeight: FontWeight.bold,
@@ -183,68 +190,72 @@ class SourceInspectionModal extends StatelessWidget {
   Widget _buildPageContent(MemoPalette palette) {
     final box = sourceBlock?.boundingBox;
 
-    if (sourcePageFile != null && sourcePageFile!.existsSync()) {
-      return LayoutBuilder(
-        builder: (context, constraints) {
-          return Stack(
-            fit: StackFit.passthrough,
-            children: [
-              Image.file(
-                sourcePageFile!,
-                fit: BoxFit.contain,
-              ),
-              if (box != null)
-                Positioned.fill(
-                  child: CustomPaint(
-                    painter: _BoundingBoxHighlightPainter(
-                      box: box,
-                      color: palette.warning,
-                    ),
-                  ),
+    if (sourcePageFile != null &&
+        sourcePageFile!.existsSync() &&
+        sourcePage != null) {
+      final width = sourcePage!.normalizedAsset?.width ?? sourcePage!.width;
+      final height = sourcePage!.normalizedAsset?.height ?? sourcePage!.height;
+      return AspectRatio(
+        aspectRatio: width / height,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            Image.file(sourcePageFile!, fit: BoxFit.fill),
+            if (box != null && sourceBlock!.hasValidBox && box.isValid)
+              CustomPaint(
+                painter: _BoundingBoxHighlightPainter(
+                  box: box,
+                  color: palette.warning,
                 ),
-            ],
-          );
-        },
+              ),
+          ],
+        ),
       );
     }
-
     // Fallback if image file is not loaded: display simulated page with highlighted block text
-    return Padding(
-      padding: const EdgeInsets.all(24),
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(Icons.menu_book_rounded, size: 48, color: palette.primary.withValues(alpha: 0.5)),
-          const SizedBox(height: 16),
-          Text(
-            'Khối văn bản nguồn:',
-            style: TextStyle(fontSize: 12, color: palette.textMuted, fontWeight: FontWeight.bold),
-          ),
-          const SizedBox(height: 8),
-          Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: palette.surface,
-              borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: palette.warning, width: 2),
+    return SingleChildScrollView(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              Icons.menu_book_rounded,
+              size: 48,
+              color: palette.primary.withValues(alpha: 0.5),
             ),
-            child: Text(
-              sourceBlock?.normalizedText ?? sourceQuote,
-              style: const TextStyle(fontSize: 13, height: 1.4),
-              textAlign: TextAlign.center,
+            const SizedBox(height: 16),
+            Text(
+              'Khối văn bản nguồn:',
+              style: TextStyle(
+                fontSize: 12,
+                color: palette.textMuted,
+                fontWeight: FontWeight.bold,
+              ),
             ),
-          ),
-        ],
+            const SizedBox(height: 8),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: palette.surface,
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: palette.warning, width: 2),
+              ),
+              child: Text(
+                sourceBlock?.normalizedText ?? sourceQuote,
+                style: const TextStyle(fontSize: 13, height: 1.4),
+                textAlign: TextAlign.center,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
 }
 
 class _BoundingBoxHighlightPainter extends CustomPainter {
-  const _BoundingBoxHighlightPainter({
-    required this.box,
-    required this.color,
-  });
+  const _BoundingBoxHighlightPainter({required this.box, required this.color});
 
   final NormalizedBoundingBox box;
   final Color color;
@@ -267,8 +278,14 @@ class _BoundingBoxHighlightPainter extends CustomPainter {
       ..strokeWidth = 3
       ..style = PaintingStyle.stroke;
 
-    canvas.drawRRect(RRect.fromRectAndRadius(rect, const Radius.circular(4)), fillPaint);
-    canvas.drawRRect(RRect.fromRectAndRadius(rect, const Radius.circular(4)), borderPaint);
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(rect, const Radius.circular(4)),
+      fillPaint,
+    );
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(rect, const Radius.circular(4)),
+      borderPaint,
+    );
   }
 
   @override

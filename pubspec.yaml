@@ -50,6 +50,7 @@ dependencies:
   document_scan: 0.3.1
   google_mlkit_text_recognition: ^0.17.1
   http: ^1.6.0
+  unorm_dart: ^0.3.2
 
 dev_dependencies:
   flutter_test:

@@ -1,65 +1,68 @@
 # MemoMind AI
 
-MemoMind AI is an Android-focused Flutter project for turning short lecture documents into source-linked study cards and reviewing them offline. The app currently includes an interactive home screen and an offline-first camera/gallery document-import flow. OCR, Firebase sync, and review sessions are planned, not yet implemented.
+MemoMind AI is an Android focused Flutter app for turning lecture documents into source cited study cards. It supports offline first camera and gallery import, on device OCR, AI assisted BASIC/CLOZE/MCQ generation, review and correction, and SQLite deck storage.
 
 ## Architecture
 
-- Imported documents and source-page metadata are stored through SQLite (`sqflite`). Future study data will use the same local-first boundary; the UI will not query Firestore as its primary data source.
-- Firebase Authentication, Firestore, App Check, and Firebase AI Logic are planned for identity, cloud sync, and AI generation. Firestore will be a cloud replica.
-- OCR will run on the device. A user will confirm extracted text and review generated cards before saving them.
-- Review events will be immutable. The SM-2 scheduler will belong in pure Dart domain code, independent of Flutter, SQLite, and Firebase.
+- Imported pages, confirmed OCR source blocks, decks, and cards are stored in SQLite. Accepted cards retain a document, page, and source block link.
+- OCR runs on the device. Optional crop enhancement sends only the selected JPEG region to the Express API after user consent.
+- The Express API in `functions/` proxies Groq material generation and Gemini OCR enhancement. Provider API keys stay on the server and never ship in Flutter.
+- Review scheduling, cloud sync, and cross device replication remain future work.
 
 ## Project layout
 
 ```text
 lib/
-  app/                    # App setup, bootstrap, and routing
-  core/
-    database/migrations/  # SQLite setup and versioned migrations
-    firebase/             # Shared Firebase configuration and adapters
-    errors/
-    logging/
-    platform/             # Device and operating-system integrations
+  core/database/          # SQLite schema and migrations
+  core/network/           # Backend API client
   features/
     document_import/
-    home/                   # Dashboard UI and sample presentation data
     ocr_editor/
-    material_generation/
+    material_generation/  # Generate, verify, review, and save source linked materials
     deck_management/
-    review_session/
-    statistics/
-    sync/
-    backup/               # P1 placeholder
-    deck_sharing/         # P1 placeholder
-    push_notifications/   # P1 placeholder
-  shared/
-    widgets/
-    theme/
+functions/
+  src/                    # Express routes, schemas, provider adapters, validators
+  test/                   # Provider mocked API tests
 test/
   unit/
   widget/
-integration_test/
-docs/
-  architecture/
-  decisions/
-firebase/                 # Firebase rules and emulator setup, when added
-functions/                # P1 Cloud Functions placeholder
 ```
 
-Each P0 feature has `presentation`, `application`, `domain`, and `data` directories. Empty directories contain `.gitkeep` so Git can track them. Add a real file to a directory and remove its `.gitkeep` when work begins there.
+## AI backend setup
 
-## Delivery stages
+1. Install the Flutter SDK and Node.js 18 or newer.
+2. In `functions/`, run `npm ci`.
+3. Copy `functions/.env.example` to `functions/.env` and set the server secrets `GROQ_API_KEY` and `GEMINI_API_KEY`. Keep both keys off mobile builds and out of source control.
+4. Run `npm start` from `functions/`.
+5. Configure the app backend URL with `--dart-define=BACKEND_BASE_URL=https://your-api-host`. The default is `https://api.leaselinkconnect.me`.
 
-- **P0:** Camera/gallery document import is implemented with private app storage and SQLite metadata. Local deck and card management, on-device OCR and correction, source-linked AI material generation through Firebase AI Logic, offline review, local reminders and statistics remain planned. The `sync` directory reserves the boundary for cloud replication.
-- **P1:** Cloud Functions, original-file backup in Cloud Storage, multi-device sync, private deck sharing, and push notifications. The corresponding directories are placeholders only.
+The backend accepts source materials at `POST /api/v1/materials/generate` and optional OCR crop images at `POST /api/v1/ocr/enhance`. Deploy the backend before using AI from the app. The old flashcard generation endpoint remains available for app compatibility.
 
-## Getting started and collaborating
+Generation requests identify the source document, requested card types, quantity mode, and confirmed source blocks:
 
-1. Install the Flutter SDK and Android development tools.
-2. Run `flutter pub get` and `flutter run` from this directory. The home screen uses sample data; unfinished destinations are clearly marked.
-3. Run `flutter test` and `flutter analyze` before proposing changes.
-4. Create a branch from `main` for each change and open a pull request for review. Keep feature code inside its feature directory and record architecture decisions in `docs/decisions`.
+```json
+{
+  "documentId": "document-id",
+  "types": ["BASIC", "CLOZE", "MCQ"],
+  "quantityMode": "auto",
+  "sourceBlocks": [
+    {
+      "blockId": "source-block-id",
+      "documentId": "document-id",
+      "pageNumber": 2,
+      "normalizedText": "Confirmed text from page two."
+    }
+  ]
+}
+```
 
-Do not commit `.env` files, service-account keys, or other credentials. Firebase project configuration and dependencies will be added when their features are implemented. This repository has no GitHub remote configured yet.
+Use `quantityMode: "manual"` with `desiredCount` from 1–30 to set a total target. Auto mode returns at most 20 cards. The response contains only server validated cards, source links, discard counts, per type counts, and coded warnings. MCQ cards have options A–D, a correct option ID, and an explanation. Requests with no valid result return HTTP 422. The server validates the source blocks supplied with the request; Flutter rechecks them against SQLite before saving.
+
+
+## Validation
+
+Run `npm test` from `functions/`, and `flutter analyze` plus `flutter test` from the repository root. These checks use mocked provider responses and do not need actual API keys.
+
+Do not commit `.env` files, service account keys, or other credentials. This repository has no GitHub remote configured yet.
 
 Be Vietnam Pro font files are bundled for offline use. Its license is in `licenses/BeVietnamPro-OFL.txt`.

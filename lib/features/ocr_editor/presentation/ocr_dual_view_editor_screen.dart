@@ -190,7 +190,8 @@ class _OcrDualViewEditorScreenState extends State<OcrDualViewEditorScreen> {
   Future<void> _updateBlockText(SourceBlock block, String newText) async {
     final updated = block.copyWith(
       normalizedText: newText,
-      status: block.status == BlockStatus.needsReview && newText.trim().isNotEmpty
+      status:
+          block.status == BlockStatus.needsReview && newText.trim().isNotEmpty
           ? BlockStatus.draft
           : block.status,
     );
@@ -203,7 +204,9 @@ class _OcrDualViewEditorScreenState extends State<OcrDualViewEditorScreen> {
     _reloadSilently();
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Đã khôi phục văn bản nhận dạng ban đầu.')),
+        const SnackBar(
+          content: Text('Đã khôi phục văn bản nhận dạng ban đầu.'),
+        ),
       );
     }
   }
@@ -322,9 +325,8 @@ class _OcrDualViewEditorScreenState extends State<OcrDualViewEditorScreen> {
     } catch (e) {
       if (!mounted) return;
       Navigator.pop(context); // Dismiss loading dialog
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(e.toString())),
-      );
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(e.toString())));
     }
   }
 
@@ -552,6 +554,16 @@ class _OcrDualViewEditorScreenState extends State<OcrDualViewEditorScreen> {
           ],
         ),
         actions: [
+          if (_review?.isReadyForGeneration == true)
+            IconButton(
+              tooltip: 'Tạo học liệu',
+              icon: const Icon(Icons.auto_awesome),
+              onPressed: () => MaterialGenerationFlow.start(
+                context: context,
+                document: widget.document,
+                ocrRepository: _repository,
+              ),
+            ),
           IconButton(
             tooltip: 'Lưu bản nháp',
             icon: const Icon(Icons.save_outlined),
@@ -573,7 +585,10 @@ class _OcrDualViewEditorScreenState extends State<OcrDualViewEditorScreen> {
               children: [
                 Expanded(flex: 5, child: _buildImageSection(palette)),
                 const VerticalDivider(width: 1),
-                Expanded(flex: 5, child: _buildEditorSection(palette, filteredBlocks)),
+                Expanded(
+                  flex: 5,
+                  child: _buildEditorSection(palette, filteredBlocks),
+                ),
               ],
             );
           } else {
@@ -581,7 +596,10 @@ class _OcrDualViewEditorScreenState extends State<OcrDualViewEditorScreen> {
               children: [
                 Expanded(flex: 4, child: _buildImageSection(palette)),
                 const Divider(height: 1),
-                Expanded(flex: 6, child: _buildEditorSection(palette, filteredBlocks)),
+                Expanded(
+                  flex: 6,
+                  child: _buildEditorSection(palette, filteredBlocks),
+                ),
               ],
             );
           }
@@ -593,7 +611,9 @@ class _OcrDualViewEditorScreenState extends State<OcrDualViewEditorScreen> {
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
           decoration: BoxDecoration(
             color: palette.surface,
-            border: Border(top: BorderSide(color: palette.outline.withValues(alpha: 0.2))),
+            border: Border(
+              top: BorderSide(color: palette.outline.withValues(alpha: 0.2)),
+            ),
           ),
           child: Row(
             children: [
@@ -683,7 +703,11 @@ class _OcrDualViewEditorScreenState extends State<OcrDualViewEditorScreen> {
               tooltip: 'Đặt lại góc nhìn',
               backgroundColor: palette.surface,
               onPressed: () => _transformController.value = Matrix4.identity(),
-              child: Icon(Icons.center_focus_strong, color: palette.primary, size: 20),
+              child: Icon(
+                Icons.center_focus_strong,
+                color: palette.primary,
+                size: 20,
+              ),
             ),
           ),
         ],
@@ -691,10 +715,7 @@ class _OcrDualViewEditorScreenState extends State<OcrDualViewEditorScreen> {
     );
   }
 
-  Widget _buildEditorSection(
-    MemoPalette palette,
-    List<SourceBlock> blocks,
-  ) {
+  Widget _buildEditorSection(MemoPalette palette, List<SourceBlock> blocks) {
     return Column(
       children: [
         // Filter tabs
@@ -707,7 +728,11 @@ class _OcrDualViewEditorScreenState extends State<OcrDualViewEditorScreen> {
               children: [
                 _buildFilterChip('Tất cả', _BlockFilter.all, palette),
                 const SizedBox(width: 8),
-                _buildFilterChip('Cần kiểm tra', _BlockFilter.needsReview, palette),
+                _buildFilterChip(
+                  'Cần kiểm tra',
+                  _BlockFilter.needsReview,
+                  palette,
+                ),
                 const SizedBox(width: 8),
                 _buildFilterChip('Đã sửa', _BlockFilter.edited, palette),
               ],
@@ -743,7 +768,8 @@ class _OcrDualViewEditorScreenState extends State<OcrDualViewEditorScreen> {
                       isSelected: isSelected,
                       palette: palette,
                       onTap: () => _selectBlock(block.blockId),
-                      onTextChange: (newText) => _updateBlockText(block, newText),
+                      onTextChange: (newText) =>
+                          _updateBlockText(block, newText),
                       onRestore: () => _restoreBlock(block),
                       onVerify: () => _markBlockVerified(block),
                       onDelete: () => _deleteBlock(block),
@@ -848,8 +874,8 @@ class _BlockCardState extends State<_BlockCard> {
           color: widget.isSelected
               ? palette.primary
               : (block.needsReview
-                  ? palette.warning
-                  : palette.outline.withValues(alpha: 0.2)),
+                    ? palette.warning
+                    : palette.outline.withValues(alpha: 0.2)),
           width: widget.isSelected ? 2 : 1,
         ),
       ),
@@ -865,11 +891,12 @@ class _BlockCardState extends State<_BlockCard> {
               Row(
                 children: [
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 2,
+                    ),
                     decoration: BoxDecoration(
-                      color: widget.isSelected
-                          ? palette.primary
-                          : palette.hero,
+                      color: widget.isSelected ? palette.primary : palette.hero,
                       borderRadius: BorderRadius.circular(6),
                     ),
                     child: Text(
@@ -877,7 +904,9 @@ class _BlockCardState extends State<_BlockCard> {
                       style: TextStyle(
                         fontSize: 12,
                         fontWeight: FontWeight.bold,
-                        color: widget.isSelected ? Colors.white : palette.primary,
+                        color: widget.isSelected
+                            ? Colors.white
+                            : palette.primary,
                       ),
                     ),
                   ),
@@ -886,7 +915,10 @@ class _BlockCardState extends State<_BlockCard> {
                   // Confidence badge (BR04-04, BR05-07)
                   if (block.confidence != null) ...[
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 6,
+                        vertical: 2,
+                      ),
                       decoration: BoxDecoration(
                         color: palette.secondaryContainer,
                         borderRadius: BorderRadius.circular(6),
@@ -898,7 +930,9 @@ class _BlockCardState extends State<_BlockCard> {
                     ),
                   ] else ...[
                     Text(
-                      block.isUserAdded ? 'Người dùng nhập' : 'AI / Không có confidence',
+                      block.isUserAdded
+                          ? 'Người dùng nhập'
+                          : 'AI / Không có confidence',
                       style: TextStyle(fontSize: 11, color: palette.outline),
                     ),
                   ],
@@ -907,7 +941,10 @@ class _BlockCardState extends State<_BlockCard> {
 
                   if (block.needsReview)
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 6,
+                        vertical: 2,
+                      ),
                       decoration: BoxDecoration(
                         color: palette.warning.withValues(alpha: 0.15),
                         borderRadius: BorderRadius.circular(6),
@@ -915,11 +952,19 @@ class _BlockCardState extends State<_BlockCard> {
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          Icon(Icons.warning_amber_rounded, size: 14, color: palette.warning),
+                          Icon(
+                            Icons.warning_amber_rounded,
+                            size: 14,
+                            color: palette.warning,
+                          ),
                           const SizedBox(width: 4),
                           Text(
                             'Cần kiểm tra',
-                            style: TextStyle(fontSize: 11, color: palette.warning, fontWeight: FontWeight.bold),
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: palette.warning,
+                              fontWeight: FontWeight.bold,
+                            ),
                           ),
                         ],
                       ),
@@ -928,12 +973,18 @@ class _BlockCardState extends State<_BlockCard> {
                   if (block.isEdited) ...[
                     const SizedBox(width: 6),
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 6,
+                        vertical: 2,
+                      ),
                       decoration: BoxDecoration(
                         color: palette.hero,
                         borderRadius: BorderRadius.circular(6),
                       ),
-                      child: const Text('Đã sửa', style: TextStyle(fontSize: 11)),
+                      child: const Text(
+                        'Đã sửa',
+                        style: TextStyle(fontSize: 11),
+                      ),
                     ),
                   ],
                 ],
@@ -963,7 +1014,9 @@ class _BlockCardState extends State<_BlockCard> {
                   child: Row(
                     children: [
                       Icon(
-                        _showRawText ? Icons.arrow_drop_down : Icons.arrow_right,
+                        _showRawText
+                            ? Icons.arrow_drop_down
+                            : Icons.arrow_right,
                         size: 18,
                         color: palette.outline,
                       ),
@@ -1009,22 +1062,36 @@ class _BlockCardState extends State<_BlockCard> {
                           TextButton.icon(
                             style: TextButton.styleFrom(
                               visualDensity: VisualDensity.compact,
-                              padding: const EdgeInsets.symmetric(horizontal: 8),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                              ),
                             ),
                             icon: const Icon(Icons.undo_rounded, size: 16),
-                            label: const Text('Khôi phục gốc', style: TextStyle(fontSize: 12)),
+                            label: const Text(
+                              'Khôi phục gốc',
+                              style: TextStyle(fontSize: 12),
+                            ),
                             onPressed: widget.onRestore,
                           ),
                         if (block.hasValidBox && block.boundingBox != null)
                           TextButton.icon(
                             style: TextButton.styleFrom(
                               visualDensity: VisualDensity.compact,
-                              padding: const EdgeInsets.symmetric(horizontal: 8),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                              ),
                             ),
-                            icon: Icon(Icons.auto_awesome, size: 16, color: palette.primary),
+                            icon: Icon(
+                              Icons.auto_awesome,
+                              size: 16,
+                              color: palette.primary,
+                            ),
                             label: Text(
                               'Cải thiện bằng AI',
-                              style: TextStyle(fontSize: 12, color: palette.primary),
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: palette.primary,
+                              ),
                             ),
                             onPressed: widget.onGeminiEnhance,
                           ),
@@ -1035,15 +1102,23 @@ class _BlockCardState extends State<_BlockCard> {
                       children: [
                         IconButton(
                           tooltip: 'Xóa đoạn này',
-                          icon: Icon(Icons.delete_outline_rounded, size: 18, color: palette.error),
+                          icon: Icon(
+                            Icons.delete_outline_rounded,
+                            size: 18,
+                            color: palette.error,
+                          ),
                           onPressed: widget.onDelete,
                         ),
                         IconButton(
                           tooltip: 'Đánh dấu đã kiểm tra',
                           icon: Icon(
-                            block.isVerified ? Icons.check_circle : Icons.check_circle_outline,
+                            block.isVerified
+                                ? Icons.check_circle
+                                : Icons.check_circle_outline,
                             size: 20,
-                            color: block.isVerified ? palette.success : palette.outline,
+                            color: block.isVerified
+                                ? palette.success
+                                : palette.outline,
                           ),
                           onPressed: widget.onVerify,
                         ),

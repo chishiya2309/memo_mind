@@ -57,6 +57,7 @@ Từ PowerShell tại thư mục gốc repository. Chỉ đưa lên server file 
 $deployDir = Join-Path $env:TEMP "memo-mind-functions"
 New-Item -ItemType Directory -Force $deployDir | Out-Null
 Copy-Item .\functions\index.js, .\functions\package.json, .\functions\package-lock.json $deployDir
+Copy-Item .\functions\src $deployDir -Recurse
 Compress-Archive -Path "$deployDir\*" -DestinationPath "$deployDir.zip" -Force
 scp -i "$env:USERPROFILE\Downloads\memo-mind.pem" "$deployDir.zip" ubuntu@<ELASTIC-IP>:/tmp/memo-mind-functions.zip
 ```
@@ -87,6 +88,8 @@ Nội dung:
 ```dotenv
 GROQ_API_KEY=<GROQ_API_KEY_THẬT>
 GROQ_MODEL=openai/gpt-oss-20b
+GEMINI_API_KEY=<GEMINI_API_KEY>
+GEMINI_MODEL=gemini-2.5-flash
 PORT=8080
 HOST=127.0.0.1
 ```

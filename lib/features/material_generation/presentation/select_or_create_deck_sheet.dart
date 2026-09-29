@@ -32,7 +32,8 @@ class SelectOrCreateDeckSheet extends StatefulWidget {
   }
 
   @override
-  State<SelectOrCreateDeckSheet> createState() => _SelectOrCreateDeckSheetState();
+  State<SelectOrCreateDeckSheet> createState() =>
+      _SelectOrCreateDeckSheetState();
 }
 
 class _SelectOrCreateDeckSheetState extends State<SelectOrCreateDeckSheet> {
@@ -70,7 +71,9 @@ class _SelectOrCreateDeckSheetState extends State<SelectOrCreateDeckSheet> {
     try {
       final deck = await widget.deckRepository.createDeck(
         title: title,
-        description: _newDescController.text.trim().isEmpty ? null : _newDescController.text.trim(),
+        description: _newDescController.text.trim().isEmpty
+            ? null
+            : _newDescController.text.trim(),
         tone: _selectedTone,
       );
       if (mounted) {
@@ -131,7 +134,9 @@ class _SelectOrCreateDeckSheetState extends State<SelectOrCreateDeckSheet> {
                     ),
                   ),
                   Text(
-                    'Lưu ${widget.cardCountToSave} thẻ đã chấp nhận',
+                    widget.cardCountToSave == 0
+                        ? 'Chọn deck đích'
+                        : 'Lưu ${widget.cardCountToSave} thẻ đã chấp nhận',
                     style: theme.textTheme.bodySmall?.copyWith(
                       color: palette.textMuted,
                     ),
@@ -150,7 +155,9 @@ class _SelectOrCreateDeckSheetState extends State<SelectOrCreateDeckSheet> {
             // Form tạo Deck mới (Luồng 31a)
             Text(
               'Tạo bộ thẻ mới',
-              style: theme.textTheme.labelLarge?.copyWith(fontWeight: FontWeight.bold),
+              style: theme.textTheme.labelLarge?.copyWith(
+                fontWeight: FontWeight.bold,
+              ),
             ),
             const SizedBox(height: 8),
             if (_createError != null) ...[
@@ -166,7 +173,9 @@ class _SelectOrCreateDeckSheetState extends State<SelectOrCreateDeckSheet> {
               decoration: InputDecoration(
                 labelText: 'Tên bộ thẻ *',
                 hintText: 'Ví dụ: Lịch sử đại cương',
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
               ),
             ),
             const SizedBox(height: 12),
@@ -174,13 +183,18 @@ class _SelectOrCreateDeckSheetState extends State<SelectOrCreateDeckSheet> {
               controller: _newDescController,
               decoration: InputDecoration(
                 labelText: 'Mô tả (tùy chọn)',
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
               ),
             ),
             const SizedBox(height: 12),
             Row(
               children: [
-                Text('Màu sắc: ', style: TextStyle(color: palette.textMuted, fontSize: 13)),
+                Text(
+                  'Màu sắc: ',
+                  style: TextStyle(color: palette.textMuted, fontSize: 13),
+                ),
                 const SizedBox(width: 8),
                 Expanded(
                   child: SingleChildScrollView(
@@ -197,10 +211,16 @@ class _SelectOrCreateDeckSheetState extends State<SelectOrCreateDeckSheet> {
                               width: 28,
                               height: 28,
                               decoration: BoxDecoration(
-                                color: MemoPalette.deckPastel(context, tone.index),
+                                color: MemoPalette.deckPastel(
+                                  context,
+                                  tone.index,
+                                ),
                                 shape: BoxShape.circle,
                                 border: isSelected
-                                    ? Border.all(color: palette.primary, width: 2.5)
+                                    ? Border.all(
+                                        color: palette.primary,
+                                        width: 2.5,
+                                      )
                                     : null,
                               ),
                             ),
@@ -235,7 +255,9 @@ class _SelectOrCreateDeckSheetState extends State<SelectOrCreateDeckSheet> {
             OutlinedButton.icon(
               style: OutlinedButton.styleFrom(
                 minimumSize: const Size(double.infinity, 48),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
               ),
               icon: const Icon(Icons.add_rounded),
               label: const Text('Tạo bộ thẻ mới'),
@@ -258,7 +280,10 @@ class _SelectOrCreateDeckSheetState extends State<SelectOrCreateDeckSheet> {
                       child: Text(
                         'Chưa có bộ thẻ nào. Hãy bấm "Tạo bộ thẻ mới" ở trên.',
                         textAlign: TextAlign.center,
-                        style: TextStyle(color: palette.textMuted, fontSize: 13),
+                        style: TextStyle(
+                          color: palette.textMuted,
+                          fontSize: 13,
+                        ),
                       ),
                     );
                   }
@@ -271,17 +296,26 @@ class _SelectOrCreateDeckSheetState extends State<SelectOrCreateDeckSheet> {
                       return ListTile(
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(12),
-                          side: BorderSide(color: palette.outline.withValues(alpha: 0.3)),
+                          side: BorderSide(
+                            color: palette.outline.withValues(alpha: 0.3),
+                          ),
                         ),
                         tileColor: palette.surfaceMuted,
                         leading: Container(
                           width: 40,
                           height: 40,
                           decoration: BoxDecoration(
-                            color: MemoPalette.deckPastel(context, deck.tone.index),
+                            color: MemoPalette.deckPastel(
+                              context,
+                              deck.tone.index,
+                            ),
                             borderRadius: BorderRadius.circular(8),
                           ),
-                          child: Icon(Icons.folder_copy_rounded, color: palette.primary, size: 20),
+                          child: Icon(
+                            Icons.folder_copy_rounded,
+                            color: palette.primary,
+                            size: 20,
+                          ),
                         ),
                         title: Text(
                           deck.title,

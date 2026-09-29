@@ -1,233 +1,223 @@
 import 'package:flutter/material.dart';
 
-import '../../../shared/theme/memo_theme.dart';
+import '../../deck_management/domain/deck_models.dart';
+import '../../deck_management/domain/deck_repository.dart';
 import '../../ocr_editor/domain/ocr_models.dart';
 import '../domain/material_generation_models.dart';
+import 'select_or_create_deck_sheet.dart';
 
-typedef MaterialGenerationConfig = ({
-  FlashcardFormat format,
-  int count,
-  Set<String> selectedBlockIds,
-});
+typedef GenerationSelection = ({MaterialGenerationConfig config, Deck deck});
 
 class MaterialGenerationConfigModal extends StatefulWidget {
   const MaterialGenerationConfigModal({
     super.key,
+    required this.documentId,
     required this.documentTitle,
     required this.verifiedBlocks,
+    required this.deckRepository,
   });
-
-  final String documentTitle;
+  final String documentId, documentTitle;
   final List<SourceBlock> verifiedBlocks;
-
-  static Future<MaterialGenerationConfig?> show(
+  final DeckRepository deckRepository;
+  static Future<GenerationSelection?> show(
     BuildContext context, {
+    required String documentId,
     required String documentTitle,
     required List<SourceBlock> verifiedBlocks,
-  }) {
-    return showModalBottomSheet<MaterialGenerationConfig>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (ctx) => MaterialGenerationConfigModal(
-        documentTitle: documentTitle,
-        verifiedBlocks: verifiedBlocks,
-      ),
-    );
-  }
-
+    required DeckRepository deckRepository,
+  }) => showModalBottomSheet<GenerationSelection>(
+    context: context,
+    isScrollControlled: true,
+    builder: (_) => MaterialGenerationConfigModal(
+      documentId: documentId,
+      documentTitle: documentTitle,
+      verifiedBlocks: verifiedBlocks,
+      deckRepository: deckRepository,
+    ),
+  );
   @override
-  State<MaterialGenerationConfigModal> createState() => _MaterialGenerationConfigModalState();
+  State<MaterialGenerationConfigModal> createState() =>
+      _MaterialGenerationConfigModalState();
 }
 
-class _MaterialGenerationConfigModalState extends State<MaterialGenerationConfigModal> {
-  FlashcardFormat _format = FlashcardFormat.mixed;
-  int _cardCount = 5;
-  final bool _useAllBlocks = true;
-  late final Set<String> _selectedBlockIds;
-
+class _MaterialGenerationConfigModalState
+    extends State<MaterialGenerationConfigModal> {
+  final _types = <CardType>{CardType.basic, CardType.cloze};
+  final _count = TextEditingController(text: '10');
+  QuantityMode _mode = QuantityMode.auto;
+  late final Set<String> _blocks = widget.verifiedBlocks
+      .map((b) => b.blockId)
+      .toSet();
+  Deck? _deck;
+  String? _error;
+  bool _choosingDeck = false;
   @override
-  void initState() {
-    super.initState();
-    _selectedBlockIds = widget.verifiedBlocks.map((b) => b.blockId).toSet();
+  void dispose() {
+    _count.dispose();
+    super.dispose();
+  }
+
+  Future<void> _chooseDeck() async {
+    if (_choosingDeck) return;
+    setState(() => _choosingDeck = true);
+    try {
+      final deck = await SelectOrCreateDeckSheet.show(
+        context,
+        deckRepository: widget.deckRepository,
+        cardCountToSave: 0,
+      );
+      if (mounted && deck != null) setState(() => _deck = deck);
+    } finally {
+      if (mounted) setState(() => _choosingDeck = false);
+    }
+  }
+
+  void _submit() {
+    final count = int.tryParse(_count.text);
+    String? error;
+    if (_types.isEmpty) {
+      error = 'Chọn ít nhất một loại học liệu.';
+    } else if (_mode == QuantityMode.manual &&
+        (count == null || count < _types.length || count > 30)) {
+      error =
+          'Số lượng phải từ ${_types.length} đến 30, đủ cho các loại đã chọn.';
+    } else if (_blocks.isEmpty) {
+      error = 'Chọn ít nhất một đoạn nguồn.';
+    } else if (widget.verifiedBlocks
+            .where((b) => _blocks.contains(b.blockId))
+            .fold<int>(0, (n, b) => n + b.normalizedText.length) >
+        100000) {
+      error = 'Nguồn vượt 100.000 ký tự. Vui lòng chọn ít đoạn hơn.';
+    } else if (_deck == null) {
+      error = 'Chọn deck đích trước khi tạo học liệu.';
+    }
+    if (error != null) {
+      setState(() => _error = error);
+      return;
+    }
+    Navigator.pop(context, (
+      config: MaterialGenerationConfig(
+        documentId: widget.documentId,
+        types: Set.unmodifiable(_types),
+        quantityMode: _mode,
+        desiredCount: _mode == QuantityMode.manual ? count : null,
+        selectedBlockIds: Set.unmodifiable(_blocks),
+      ),
+      deck: _deck!,
+    ));
   }
 
   @override
-  Widget build(BuildContext context) {
-    final palette = MemoPalette.of(context);
-    final theme = Theme.of(context);
-
-    return Container(
-      decoration: BoxDecoration(
-        color: palette.surface,
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+  Widget build(BuildContext context) => SafeArea(
+    child: ConstrainedBox(
+      constraints: BoxConstraints(
+        maxHeight: MediaQuery.sizeOf(context).height * .9,
       ),
-      padding: EdgeInsets.only(
-        top: 20,
-        left: 20,
-        right: 20,
-        bottom: MediaQuery.of(context).viewInsets.bottom + 24,
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Drag handle
-          Center(
-            child: Container(
-              width: 40,
-              height: 4,
-              decoration: BoxDecoration(
-                color: palette.outline.withValues(alpha: 0.3),
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
-          ),
-          const SizedBox(height: 16),
-
-          // Header
-          Row(
-            children: [
-              Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: palette.aiContainer,
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: Icon(Icons.auto_awesome_rounded, color: palette.aiAccent, size: 22),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Tạo Flashcard bằng AI',
-                      style: theme.textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.bold,
-                      ),
+      child: SingleChildScrollView(
+        padding: EdgeInsets.fromLTRB(
+          20,
+          24,
+          20,
+          24 + MediaQuery.viewInsetsOf(context).bottom,
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text('Tạo học liệu', style: Theme.of(context).textTheme.titleLarge),
+            Text(widget.documentTitle),
+            const SizedBox(height: 20),
+            const Text('Loại học liệu'),
+            Wrap(
+              spacing: 8,
+              children: [
+                for (final type in CardType.values)
+                  FilterChip(
+                    label: Text(type.displayName),
+                    selected: _types.contains(type),
+                    onSelected: (selected) => setState(
+                      () => selected ? _types.add(type) : _types.remove(type),
                     ),
-                    Text(
-                      widget.documentTitle,
-                      maxLines: 1,
+                  ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            SegmentedButton<QuantityMode>(
+              segments: const [
+                ButtonSegment(value: QuantityMode.auto, label: Text('Tự động')),
+                ButtonSegment(
+                  value: QuantityMode.manual,
+                  label: Text('Tùy chỉnh'),
+                ),
+              ],
+              selected: {_mode},
+              onSelectionChanged: (m) => setState(() => _mode = m.first),
+            ),
+            const SizedBox(height: 10),
+            if (_mode == QuantityMode.auto)
+              const Text(
+                'AI chọn số thẻ theo các ý đáng học trong nguồn, tối đa 20 thẻ.',
+              )
+            else
+              TextField(
+                key: const Key('material-count'),
+                controller: _count,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(
+                  labelText: 'Tổng số thẻ mong muốn (1–30)',
+                ),
+              ),
+            const SizedBox(height: 8),
+            const Text(
+              'Kết quả có thể ít hơn nếu nguồn không đủ hoặc thẻ không đạt kiểm tra.',
+            ),
+            ExpansionTile(
+              tilePadding: EdgeInsets.zero,
+              title: Text('Nguồn: ${_blocks.length} đoạn đã xác nhận'),
+              children: [
+                for (final block in widget.verifiedBlocks)
+                  CheckboxListTile(
+                    value: _blocks.contains(block.blockId),
+                    title: Text(
+                      'Trang ${block.pageNumber} • ${block.normalizedText}',
+                      maxLines: 2,
                       overflow: TextOverflow.ellipsis,
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: palette.textMuted,
-                      ),
                     ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 20),
-
-          // Section 1: Card Format
-          Text(
-            'Loại flashcard',
-            style: theme.textTheme.labelLarge?.copyWith(
-              fontWeight: FontWeight.w600,
+                    onChanged: (checked) => setState(
+                      () => checked == true
+                          ? _blocks.add(block.blockId)
+                          : _blocks.remove(block.blockId),
+                    ),
+                  ),
+              ],
             ),
-          ),
-          const SizedBox(height: 8),
-          SegmentedButton<FlashcardFormat>(
-            segments: const [
-              ButtonSegment(
-                value: FlashcardFormat.qa,
-                label: Text('Hỏi – đáp'),
-                icon: Icon(Icons.question_answer_outlined, size: 16),
-              ),
-              ButtonSegment(
-                value: FlashcardFormat.cloze,
-                label: Text('Điền khuyết'),
-                icon: Icon(Icons.edit_note_rounded, size: 16),
-              ),
-              ButtonSegment(
-                value: FlashcardFormat.mixed,
-                label: Text('Cả hai'),
-                icon: Icon(Icons.all_inclusive_rounded, size: 16),
-              ),
-            ],
-            selected: {_format},
-            onSelectionChanged: (set) => setState(() => _format = set.first),
-          ),
-          const SizedBox(height: 16),
-
-          // Section 2: Card Count
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(
-                'Số lượng flashcard',
-                style: theme.textTheme.labelLarge?.copyWith(
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              Text(
-                '$_cardCount thẻ',
-                style: theme.textTheme.titleSmall?.copyWith(
-                  fontWeight: FontWeight.bold,
-                  color: palette.primary,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 6),
-          Wrap(
-            spacing: 8,
-            children: [3, 5, 8, 10].map((count) {
-              final isSelected = _cardCount == count;
-              return ChoiceChip(
-                label: Text('$count thẻ'),
-                selected: isSelected,
-                onSelected: (_) => setState(() => _cardCount = count),
-              );
-            }).toList(),
-          ),
-          const SizedBox(height: 16),
-
-          // Section 3: Source scope
-          Row(
-            children: [
-              Icon(Icons.menu_book_rounded, size: 18, color: palette.textMuted),
-              const SizedBox(width: 8),
-              Text(
-                'Nguồn: ${widget.verifiedBlocks.length} khối văn bản đã xác nhận',
-                style: theme.textTheme.bodyMedium?.copyWith(
-                  color: palette.textMuted,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 24),
-
-          // Confirm Button
-          SizedBox(
-            width: double.infinity,
-            child: FilledButton.icon(
-              style: FilledButton.styleFrom(
-                backgroundColor: palette.primary,
-                padding: const EdgeInsets.symmetric(vertical: 14),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-              ),
-              icon: const Icon(Icons.auto_awesome, size: 18),
-              label: const Text(
-                'Tạo Flashcard',
-                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
-              ),
-              onPressed: () {
-                Navigator.of(context).pop((
-                  format: _format,
-                  count: _cardCount,
-                  selectedBlockIds: _selectedBlockIds,
-                ));
-              },
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: const Icon(Icons.folder_outlined),
+              title: Text(_deck?.title ?? 'Chọn deck đích'),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: _choosingDeck ? null : _chooseDeck,
             ),
-          ),
-        ],
+            if (_error != null)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                child: Text(
+                  _error!,
+                  style: TextStyle(color: Theme.of(context).colorScheme.error),
+                ),
+              ),
+            const SizedBox(height: 12),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton.icon(
+                onPressed: _choosingDeck ? null : _submit,
+                icon: const Icon(Icons.auto_awesome),
+                label: const Text('Tạo học liệu'),
+              ),
+            ),
+          ],
+        ),
       ),
-    );
-  }
+    ),
+  );
 }

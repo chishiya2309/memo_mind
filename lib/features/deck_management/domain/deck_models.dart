@@ -1,4 +1,7 @@
+import '../../material_generation/domain/material_generation_models.dart';
+
 import 'package:flutter/foundation.dart';
+
 import '../../home/domain/home_dashboard_data.dart';
 
 @immutable
@@ -56,26 +59,24 @@ class Deck {
   int get hashCode => Object.hash(id, title, description, tone, cardCount);
 }
 
-enum CardStatus {
-  active,
-  suspended,
-  deleted,
-}
+enum CardStatus { active, suspended, deleted }
 
 @immutable
 class CardEntity {
   const CardEntity({
     required this.id,
     required this.deckId,
-    this.type = 'flashcard',
-    required this.format,
-    required this.question,
-    required this.answer,
+    required this.type,
+    required this.front,
+    required this._back,
     required this.sourceDocumentId,
     required this.sourcePageId,
     required this.sourcePageNumber,
     required this.sourceBlockId,
     required this.sourceQuote,
+    this.options = const [],
+    this.correctOptionId,
+    this.explanation,
     this.confidence,
     this.status = CardStatus.active,
     this.repetitions = 0,
@@ -85,38 +86,57 @@ class CardEntity {
     required this.createdAt,
     required this.updatedAt,
   });
-
-  final String id;
-  final String deckId;
-  final String type;
-  final String format; // 'qa' | 'cloze'
-  final String question;
-  final String answer;
-  final String sourceDocumentId;
-  final String sourcePageId;
+  final String id, deckId, front, _back;
+  final CardType type;
+  final List<McqOption> options;
+  final String? correctOptionId, explanation;
+  String get back => type == CardType.mcq && options.isNotEmpty
+      ? options.where((o) => o.optionId == correctOptionId).firstOrNull?.text ??
+            ''
+      : _back;
+  final String sourceDocumentId, sourcePageId, sourceBlockId, sourceQuote;
   final int sourcePageNumber;
-  final String sourceBlockId;
-  final String sourceQuote;
   final double? confidence;
   final CardStatus status;
-  final int repetitions;
-  final int intervalDays;
+  final int repetitions, intervalDays;
   final double easeFactor;
-  final DateTime dueDate;
-  final DateTime createdAt;
-  final DateTime updatedAt;
-
-  @override
-  bool operator ==(Object other) =>
-      identical(this, other) ||
-      other is CardEntity &&
-          runtimeType == other.runtimeType &&
-          id == other.id &&
-          deckId == other.deckId &&
-          question == other.question &&
-          answer == other.answer &&
-          sourceBlockId == other.sourceBlockId;
-
-  @override
-  int get hashCode => Object.hash(id, deckId, question, answer, sourceBlockId);
+  final DateTime dueDate, createdAt, updatedAt;
+  CardEntity copyWith({String? id, String? deckId, CardStatus? status}) =>
+      CardEntity(
+        id: id ?? this.id,
+        deckId: deckId ?? this.deckId,
+        type: type,
+        front: front,
+        back: back,
+        options: options,
+        correctOptionId: correctOptionId,
+        explanation: explanation,
+        sourceDocumentId: sourceDocumentId,
+        sourcePageId: sourcePageId,
+        sourcePageNumber: sourcePageNumber,
+        sourceBlockId: sourceBlockId,
+        sourceQuote: sourceQuote,
+        confidence: confidence,
+        status: status ?? this.status,
+        repetitions: repetitions,
+        intervalDays: intervalDays,
+        easeFactor: easeFactor,
+        dueDate: dueDate,
+        createdAt: createdAt,
+        updatedAt: updatedAt,
+      );
+  MaterialDraft toDraft() => MaterialDraft(
+    id: id,
+    type: type,
+    front: front,
+    back: back,
+    sourcePage: sourcePageNumber,
+    sourceBlockId: sourceBlockId,
+    sourceQuote: sourceQuote,
+    options: options,
+    correctOptionId: correctOptionId,
+    explanation: explanation,
+    confidence: confidence,
+    status: DraftCardStatus.accepted,
+  );
 }

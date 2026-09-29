@@ -59,16 +59,17 @@ class _FakeOcrRepository implements OcrRepository {
 
 class _FakeMaterialGenRepository implements MaterialGenerationRepository {
   _FakeMaterialGenRepository({required this.generatedCards});
-  final List<FlashcardDraft> generatedCards;
+  final List<MaterialDraft> generatedCards;
 
   @override
-  Future<FlashcardGenerationResult> generateFlashcards({
+  Future<MaterialGenerationResult> generateMaterials({
     required String documentId,
-    required FlashcardFormat format,
-    required int desiredCount,
+    required Set<CardType> types,
+    QuantityMode quantityMode = QuantityMode.auto,
+    int? desiredCount,
     required List<SourceBlock> sourceBlocks,
   }) async {
-    return FlashcardGenerationResult(
+    return MaterialGenerationResult(
       cards: generatedCards,
       totalGenerated: generatedCards.length,
       validCount: generatedCards.length,
@@ -77,9 +78,9 @@ class _FakeMaterialGenRepository implements MaterialGenerationRepository {
   }
 
   @override
-  Future<FlashcardDraft> regenerateSingleCard({
+  Future<MaterialDraft> regenerateSingleCard({
     required SourceBlock sourceBlock,
-    required FlashcardFormat format,
+    required CardType type,
   }) async {
     return generatedCards.first;
   }
@@ -123,7 +124,7 @@ void main() {
       );
       expect(
         FlashcardVerifier.isQuoteSupported('trí tuệ nhân tạo', source),
-        isTrue,
+        isFalse,
       );
       expect(
         FlashcardVerifier.isQuoteSupported(
@@ -138,64 +139,70 @@ void main() {
       );
     });
 
-    test('verifyEditedCard marks card needsSourceCheck if quote is missing', () {
-      final block = SourceBlock(
-        blockId: 'blk-1',
-        documentId: 'doc-1',
-        pageId: 'page-1',
-        pageNumber: 1,
-        orderIndex: 0,
-        rawText: 'Việt Nam nằm ở Đông Nam Á.',
-        normalizedText: 'Việt Nam nằm ở Đông Nam Á.',
-        createdAt: DateTime.now(),
-        updatedAt: DateTime.now(),
-      );
+    test(
+      'verifyEditedCard marks card needsSourceCheck if quote is missing',
+      () {
+        final block = SourceBlock(
+          blockId: 'blk-1',
+          documentId: 'doc-1',
+          pageId: 'page-1',
+          pageNumber: 1,
+          orderIndex: 0,
+          rawText: 'Việt Nam nằm ở Đông Nam Á.',
+          normalizedText: 'Việt Nam nằm ở Đông Nam Á.',
+          createdAt: DateTime.now(),
+          updatedAt: DateTime.now(),
+        );
 
-      final card = FlashcardDraft(
-        id: 'c-1',
-        format: FlashcardFormat.qa,
-        question: 'Việt Nam ở đâu?',
-        answer: 'Đông Nam Á',
-        sourcePage: 1,
-        sourceBlockId: 'blk-1',
-        sourceQuote: 'Châu Âu xa xôi', // Quote not in block
-      );
+        final card = MaterialDraft(
+          id: 'c-1',
+          type: CardType.basic,
+          front: 'Việt Nam ở đâu?',
+          back: 'Đông Nam Á',
+          sourcePage: 1,
+          sourceBlockId: 'blk-1',
+          sourceQuote: 'Châu Âu xa xôi', // Quote not in block
+        );
 
-      final edited = FlashcardVerifier.verifyEditedCard(
-        card: card,
-        sourceBlock: block,
-        newQuestion: 'Việt Nam nằm ở khu vực nào?',
-        newAnswer: 'Đông Nam Á',
-      );
-
-      expect(edited.status, DraftCardStatus.needsSourceCheck);
-      expect(edited.isEdited, isTrue);
-    });
-
-    test('verifyEditedCard throws FormatException if cloze question lacks [...]', () {
-      final card = FlashcardDraft(
-        id: 'c-1',
-        format: FlashcardFormat.cloze,
-        question: 'Thủ đô là [...]',
-        answer: 'Hà Nội',
-        sourcePage: 1,
-        sourceBlockId: 'blk-1',
-        sourceQuote: 'Hà Nội',
-      );
-
-      expect(
-        () => FlashcardVerifier.verifyEditedCard(
+        final edited = FlashcardVerifier.verifyEditedCard(
           card: card,
-          sourceBlock: null,
-          newQuestion: 'Thủ đô của Việt Nam là Hà Nội', // missing [...]
-          newAnswer: 'Hà Nội',
-        ),
-        throwsFormatException,
-      );
-    });
+          sourceBlock: block,
+          newQuestion: 'Việt Nam nằm ở khu vực nào?',
+          newAnswer: 'Đông Nam Á',
+        );
+
+        expect(edited.status, DraftCardStatus.needsSourceCheck);
+        expect(edited.isEdited, isTrue);
+      },
+    );
+
+    test(
+      'verifyEditedCard throws FormatException if cloze question lacks [...]',
+      () {
+        final card = MaterialDraft(
+          id: 'c-1',
+          type: CardType.cloze,
+          front: 'Thủ đô là [...]',
+          back: 'Hà Nội',
+          sourcePage: 1,
+          sourceBlockId: 'blk-1',
+          sourceQuote: 'Hà Nội',
+        );
+
+        expect(
+          () => FlashcardVerifier.verifyEditedCard(
+            card: card,
+            sourceBlock: null,
+            newQuestion: 'Thủ đô của Việt Nam là Hà Nội', // missing [...]
+            newAnswer: 'Hà Nội',
+          ),
+          throwsFormatException,
+        );
+      },
+    );
   });
 
-  group('GenerateFlashcardsUseCase Tests', () {
+  group('GenerateMaterialsUseCase Tests', () {
     test('filters verified blocks and calls generation repository', () async {
       final block1 = SourceBlock(
         blockId: 'b-1',
@@ -247,17 +254,17 @@ void main() {
         ],
       );
 
-      final cardDraft = FlashcardDraft(
+      final cardDraft = MaterialDraft(
         id: 'gen-c-1',
-        format: FlashcardFormat.qa,
-        question: 'Câu hỏi?',
-        answer: 'Đáp án',
+        type: CardType.basic,
+        front: 'Câu hỏi?',
+        back: 'Đáp án',
         sourcePage: 1,
         sourceBlockId: 'b-1',
         sourceQuote: 'Khối 1 đã xác nhận',
       );
 
-      final useCase = GenerateFlashcardsUseCase(
+      final useCase = GenerateMaterialsUseCase(
         ocrRepository: _FakeOcrRepository(review),
         generationRepository: _FakeMaterialGenRepository(
           generatedCards: [cardDraft],
@@ -266,7 +273,7 @@ void main() {
 
       final result = await useCase.execute(
         documentId: 'doc-1',
-        format: FlashcardFormat.qa,
+        types: {CardType.basic},
         desiredCount: 1,
       );
 
@@ -274,58 +281,61 @@ void main() {
       expect(result.cards.first.sourceBlockId, 'b-1');
     });
 
-    test('throws MaterialGenerationFailure if no blocks are verified', () async {
-      final block = SourceBlock(
-        blockId: 'b-draft',
-        documentId: 'doc-1',
-        pageId: 'p-1',
-        pageNumber: 1,
-        orderIndex: 0,
-        rawText: 'Khối nháp',
-        normalizedText: 'Khối nháp',
-        status: BlockStatus.draft,
-        createdAt: DateTime.now(),
-        updatedAt: DateTime.now(),
-      );
-
-      final page = _createTestPage(pageId: 'p-1', documentId: 'doc-1');
-
-      final review = OcrDocumentReview(
-        document: ImportedDocument(
+    test(
+      'throws MaterialGenerationFailure if no blocks are verified',
+      () async {
+        final block = SourceBlock(
+          blockId: 'b-draft',
           documentId: 'doc-1',
-          title: 'Tài liệu test',
-          status: ImportedDocumentStatus.pendingOcrReview,
-          privacy: DocumentPrivacy.private,
+          pageId: 'p-1',
+          pageNumber: 1,
+          orderIndex: 0,
+          rawText: 'Khối nháp',
+          normalizedText: 'Khối nháp',
+          status: BlockStatus.draft,
           createdAt: DateTime.now(),
           updatedAt: DateTime.now(),
-          pages: [page],
-        ),
-        pageReviews: [
-          OcrPageReview(
-            pageId: 'p-1',
+        );
+
+        final page = _createTestPage(pageId: 'p-1', documentId: 'doc-1');
+
+        final review = OcrDocumentReview(
+          document: ImportedDocument(
             documentId: 'doc-1',
-            pageNumber: 1,
-            status: OcrPageStatus.completed,
-            blocks: [block],
+            title: 'Tài liệu test',
+            status: ImportedDocumentStatus.pendingOcrReview,
+            privacy: DocumentPrivacy.private,
+            createdAt: DateTime.now(),
             updatedAt: DateTime.now(),
+            pages: [page],
           ),
-        ],
-      );
+          pageReviews: [
+            OcrPageReview(
+              pageId: 'p-1',
+              documentId: 'doc-1',
+              pageNumber: 1,
+              status: OcrPageStatus.completed,
+              blocks: [block],
+              updatedAt: DateTime.now(),
+            ),
+          ],
+        );
 
-      final useCase = GenerateFlashcardsUseCase(
-        ocrRepository: _FakeOcrRepository(review),
-        generationRepository: _FakeMaterialGenRepository(generatedCards: []),
-      );
+        final useCase = GenerateMaterialsUseCase(
+          ocrRepository: _FakeOcrRepository(review),
+          generationRepository: _FakeMaterialGenRepository(generatedCards: []),
+        );
 
-      expect(
-        () => useCase.execute(
-          documentId: 'doc-1',
-          format: FlashcardFormat.qa,
-          desiredCount: 1,
-        ),
-        throwsA(isA<MaterialGenerationFailure>()),
-      );
-    });
+        expect(
+          () => useCase.execute(
+            documentId: 'doc-1',
+            types: {CardType.basic},
+            desiredCount: 1,
+          ),
+          throwsA(isA<MaterialGenerationFailure>()),
+        );
+      },
+    );
   });
 
   group('SaveAcceptedCardsUseCase Tests', () {
@@ -335,7 +345,7 @@ void main() {
     setUp(() async {
       db = await databaseFactoryFfi.openDatabase(inMemoryDatabasePath);
       await db.execute('PRAGMA foreign_keys = ON');
-      await MemoMindDatabase.createV5(db);
+      await MemoMindDatabase.createV6(db);
       deckRepo = LocalDeckRepository(database: MemoMindDatabase.forTesting(db));
     });
 
@@ -432,22 +442,22 @@ void main() {
         ocrRepository: _FakeOcrRepository(review),
       );
 
-      final acceptedCard = FlashcardDraft(
+      final acceptedCard = MaterialDraft(
         id: 'card-1',
-        format: FlashcardFormat.qa,
-        question: 'Câu hỏi 1?',
-        answer: 'Đáp án 1',
+        type: CardType.basic,
+        front: 'Câu hỏi 1?',
+        back: 'Đáp án 1',
         sourcePage: 1,
         sourceBlockId: 'blk-save',
         sourceQuote: 'Nội dung chuẩn',
         status: DraftCardStatus.accepted,
       );
 
-      final rejectedCard = FlashcardDraft(
+      final rejectedCard = MaterialDraft(
         id: 'card-2',
-        format: FlashcardFormat.qa,
-        question: 'Câu hỏi 2?',
-        answer: 'Đáp án 2',
+        type: CardType.basic,
+        front: 'Câu hỏi 2?',
+        back: 'Đáp án 2',
         sourcePage: 1,
         sourceBlockId: 'blk-save',
         sourceQuote: 'Nội dung chuẩn',
@@ -466,13 +476,13 @@ void main() {
       final savedCards = await deckRepo.getCardsForDeck(deck.id);
       expect(savedCards.length, 1);
       expect(savedCards.first.id, 'card-1');
-      expect(savedCards.first.question, 'Câu hỏi 1?');
+      expect(savedCards.first.front, 'Câu hỏi 1?');
 
       final updatedDeck = await deckRepo.getDeckById(deck.id);
       expect(updatedDeck?.cardCount, 1);
     });
 
-    test('throws MaterialGenerationFailure when 0 cards are accepted (Luồng 30a)', () async {
+    test('returns zero without writes when no cards are accepted', () async {
       final saveUseCase = SaveAcceptedCardsUseCase(
         deckRepository: deckRepo,
         ocrRepository: _FakeOcrRepository(
@@ -492,15 +502,15 @@ void main() {
       );
 
       expect(
-        () => saveUseCase.execute(
+        await saveUseCase.execute(
           deckId: 'deck-1',
           documentId: 'doc-0',
           drafts: [
-            FlashcardDraft(
+            MaterialDraft(
               id: 'c-pending',
-              format: FlashcardFormat.qa,
-              question: 'Q',
-              answer: 'A',
+              type: CardType.basic,
+              front: 'Q',
+              back: 'A',
               sourcePage: 1,
               sourceBlockId: 'b-1',
               sourceQuote: 'quote',
@@ -508,7 +518,7 @@ void main() {
             ),
           ],
         ),
-        throwsA(isA<MaterialGenerationFailure>()),
+        0,
       );
     });
   });
