@@ -1,9 +1,8 @@
 import 'package:flutter/material.dart';
 
-import '../../../shared/theme/memo_theme.dart';
 import '../../ocr_editor/domain/ocr_models.dart';
-import '../domain/flashcard_verifier.dart';
 import '../domain/material_generation_models.dart';
+import '../domain/material_validator.dart';
 
 class FlashcardEditDialog extends StatefulWidget {
   const FlashcardEditDialog({
@@ -12,192 +11,164 @@ class FlashcardEditDialog extends StatefulWidget {
     required this.sourceBlock,
     required this.onSaved,
   });
-
-  final FlashcardDraft card;
+  final MaterialDraft card;
   final SourceBlock? sourceBlock;
-  final ValueChanged<FlashcardDraft> onSaved;
-
+  final ValueChanged<MaterialDraft> onSaved;
   static Future<void> show(
     BuildContext context, {
-    required FlashcardDraft card,
+    required MaterialDraft card,
     required SourceBlock? sourceBlock,
-    required ValueChanged<FlashcardDraft> onSaved,
-  }) {
-    return showDialog(
-      context: context,
-      builder: (ctx) => FlashcardEditDialog(
-        card: card,
-        sourceBlock: sourceBlock,
-        onSaved: onSaved,
-      ),
-    );
-  }
-
+    required ValueChanged<MaterialDraft> onSaved,
+  }) => showDialog<void>(
+    context: context,
+    builder: (_) => FlashcardEditDialog(
+      card: card,
+      sourceBlock: sourceBlock,
+      onSaved: onSaved,
+    ),
+  );
   @override
   State<FlashcardEditDialog> createState() => _FlashcardEditDialogState();
 }
 
 class _FlashcardEditDialogState extends State<FlashcardEditDialog> {
-  late final TextEditingController _questionController;
-  late final TextEditingController _answerController;
-  String? _errorMessage;
-
-  @override
-  void initState() {
-    super.initState();
-    _questionController = TextEditingController(text: widget.card.question);
-    _answerController = TextEditingController(text: widget.card.answer);
-  }
-
+  late final _front = TextEditingController(text: widget.card.front);
+  late final _back = TextEditingController(text: widget.card.back);
+  late final _explanation = TextEditingController(
+    text: widget.card.explanation,
+  );
+  late final _options = {
+    for (final id in ['A', 'B', 'C', 'D'])
+      id: TextEditingController(
+        text: widget.card.options
+            .where((o) => o.optionId == id)
+            .firstOrNull
+            ?.text,
+      ),
+  };
+  late String? _correct = widget.card.correctOptionId;
+  Map<String, String> _errors = {};
   @override
   void dispose() {
-    _questionController.dispose();
-    _answerController.dispose();
+    for (final controller in [
+      _front,
+      _back,
+      _explanation,
+      ..._options.values,
+    ]) {
+      controller.dispose();
+    }
     super.dispose();
   }
 
   void _save() {
-    setState(() => _errorMessage = null);
+    final card = widget.card.copyWith(
+      front: _front.text.trim(),
+      back: _back.text.trim(),
+      options: widget.card.type == CardType.mcq
+          ? [
+              for (final entry in _options.entries)
+                McqOption(optionId: entry.key, text: entry.value.text.trim()),
+            ]
+          : null,
+      correctOptionId: _correct,
+      explanation: widget.card.type == CardType.mcq
+          ? _explanation.text.trim()
+          : null,
+      status: DraftCardStatus.pending,
+      isEdited: true,
+    );
+    final errors = MaterialValidator.errors(card);
+    if (errors.isNotEmpty) {
+      setState(() => _errors = errors);
+      return;
+    }
     try {
-      final updated = FlashcardVerifier.verifyEditedCard(
-        card: widget.card,
+      MaterialValidator.validate(
+        card,
         sourceBlock: widget.sourceBlock,
-        newQuestion: _questionController.text,
-        newAnswer: _answerController.text,
+        documentId: widget.sourceBlock?.documentId ?? '',
       );
-      widget.onSaved(updated);
-      Navigator.of(context).pop();
-    } on FormatException catch (e) {
-      setState(() => _errorMessage = e.message);
+      widget.onSaved(card);
+      Navigator.pop(context);
+    } on MaterialGenerationFailure catch (e) {
+      setState(() => _errors = {'source': e.message});
     }
   }
 
-  @override
-  Widget build(BuildContext context) {
-    final palette = MemoPalette.of(context);
-    final theme = Theme.of(context);
-    final isCloze = widget.card.format == FlashcardFormat.cloze;
-
-    return AlertDialog(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-      backgroundColor: palette.surface,
-      title: Row(
-        children: [
-          Icon(Icons.edit_note_rounded, color: palette.primary, size: 24),
-          const SizedBox(width: 8),
-          Text(
-            'Chỉnh sửa Flashcard',
-            style: theme.textTheme.titleMedium?.copyWith(
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-        ],
+  Widget _field(
+    String key,
+    String label,
+    TextEditingController controller, {
+    int lines = 2,
+  }) => Padding(
+    padding: const EdgeInsets.only(bottom: 12),
+    child: TextField(
+      key: Key('edit-$key'),
+      controller: controller,
+      maxLines: lines,
+      decoration: InputDecoration(
+        labelText: label,
+        errorText: _errors[key],
+        border: const OutlineInputBorder(),
       ),
-      content: SingleChildScrollView(
+    ),
+  );
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: const Text('Chỉnh sửa học liệu'),
+    content: SizedBox(
+      width: 480,
+      child: SingleChildScrollView(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            if (_errorMessage != null) ...[
-              Container(
-                padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                  color: palette.error.withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: palette.error.withValues(alpha: 0.3)),
+            _field(
+              'front',
+              widget.card.type == CardType.cloze ? 'Câu chứa [...]' : 'Câu hỏi',
+              _front,
+              lines: 3,
+            ),
+            if (widget.card.type == CardType.mcq) ...[
+              for (final entry in _options.entries)
+                _field(entry.key, 'Lựa chọn ${entry.key}', entry.value),
+              DropdownButtonFormField<String>(
+                initialValue: _correct,
+                decoration: InputDecoration(
+                  labelText: 'Đáp án đúng',
+                  errorText: _errors['correctOptionId'],
                 ),
-                child: Text(
-                  _errorMessage!,
-                  style: TextStyle(color: palette.error, fontSize: 13),
-                ),
+                items: [
+                  for (final id in _options.keys)
+                    DropdownMenuItem(value: id, child: Text(id)),
+                ],
+                onChanged: (value) => setState(() => _correct = value),
               ),
               const SizedBox(height: 12),
-            ],
-
-            // Question
-            Text(
-              isCloze ? 'Câu điền khuyết (chứa "[...]"): ' : 'Câu hỏi:',
-              style: theme.textTheme.labelMedium?.copyWith(
-                fontWeight: FontWeight.bold,
+              _field('explanation', 'Giải thích', _explanation),
+            ] else
+              _field('back', 'Đáp án', _back),
+            if (_errors['source'] != null)
+              Text(
+                _errors['source']!,
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
               ),
-            ),
-            const SizedBox(height: 6),
-            TextField(
-              controller: _questionController,
-              maxLines: 3,
-              decoration: InputDecoration(
-                hintText: isCloze
-                    ? 'Ví dụ: Thủ đô của Việt Nam là [...]'
-                    : 'Nhập câu hỏi...',
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                contentPadding: const EdgeInsets.all(12),
-              ),
-            ),
-            if (isCloze) ...[
-              const SizedBox(height: 6),
-              Align(
-                alignment: Alignment.centerRight,
-                child: TextButton.icon(
-                  style: TextButton.styleFrom(visualDensity: VisualDensity.compact),
-                  icon: const Icon(Icons.add, size: 16),
-                  label: const Text('Chèn [...]'),
-                  onPressed: () {
-                    final text = _questionController.text;
-                    final sel = _questionController.selection;
-                    final newText = sel.isValid
-                        ? text.replaceRange(sel.start, sel.end, '[...]')
-                        : '$text [...]';
-                    _questionController.text = newText;
-                  },
-                ),
-              ),
-            ],
-            const SizedBox(height: 14),
-
-            // Answer
-            Text(
-              isCloze ? 'Từ / cụm từ cần điền (đáp án):' : 'Đáp án:',
-              style: theme.textTheme.labelMedium?.copyWith(
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-            const SizedBox(height: 6),
-            TextField(
-              controller: _answerController,
-              maxLines: 2,
-              decoration: InputDecoration(
-                hintText: 'Nhập đáp án...',
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                contentPadding: const EdgeInsets.all(12),
-              ),
-            ),
-            const SizedBox(height: 12),
-
-            // Source context hint
-            Container(
-              padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(
-                color: palette.surfaceMuted,
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Text(
-                'Lưu ý (BR07-08): Nội dung sau khi sửa vẫn cần có căn cứ trong đoạn trích nguồn: "${widget.card.sourceQuote}"',
-                style: TextStyle(fontSize: 11, color: palette.textMuted),
-              ),
+            Text('Nguồn: “${widget.card.sourceQuote}”'),
+            const SizedBox(height: 8),
+            const Text(
+              'Sau khi sửa, hãy đối chiếu nguồn và chấp nhận lại thẻ.',
             ),
           ],
         ),
       ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: const Text('Hủy'),
-        ),
-        FilledButton(
-          onPressed: _save,
-          child: const Text('Lưu thay đổi'),
-        ),
-      ],
-    );
-  }
+    ),
+    actions: [
+      TextButton(
+        onPressed: () => Navigator.pop(context),
+        child: const Text('Hủy'),
+      ),
+      FilledButton(onPressed: _save, child: const Text('Lưu thay đổi')),
+    ],
+  );
 }

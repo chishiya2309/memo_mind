@@ -3,47 +3,63 @@ import '../../ocr_editor/domain/ocr_repository.dart';
 import '../domain/material_generation_models.dart';
 import '../domain/material_generation_repository.dart';
 
-class GenerateFlashcardsUseCase {
-  const GenerateFlashcardsUseCase({
+class GenerateMaterialsUseCase {
+  const GenerateMaterialsUseCase({
     required this.ocrRepository,
     required this.generationRepository,
   });
-
   final OcrRepository ocrRepository;
   final MaterialGenerationRepository generationRepository;
-
-  Future<FlashcardGenerationResult> execute({
+  Future<MaterialGenerationResult> execute({
     required String documentId,
-    required FlashcardFormat format,
-    required int desiredCount,
+    required Set<CardType> types,
+    QuantityMode quantityMode = QuantityMode.auto,
+    int? desiredCount,
     Set<String> selectedBlockIds = const {},
   }) async {
-    final review = await ocrRepository.getOcrReview(documentId);
-
-    // Filter verified or user-added blocks (BR07-01)
-    final eligibleBlocks = <SourceBlock>[];
-    for (final page in review.pageReviews) {
-      for (final block in page.blocks) {
-        if (!block.isDeleted && (block.isVerified || block.isUserAdded)) {
-          if (selectedBlockIds.isEmpty || selectedBlockIds.contains(block.blockId)) {
-            eligibleBlocks.add(block);
-          }
-        }
-      }
-    }
-
-    if (eligibleBlocks.isEmpty) {
+    if (types.isEmpty ||
+        (quantityMode == QuantityMode.manual &&
+            (desiredCount == null ||
+                desiredCount < types.length ||
+                desiredCount > 30))) {
       throw const MaterialGenerationFailure(
-        MaterialGenerationFailureCode.noValidCards,
-        'Cần ít nhất một đoạn văn bản đã được xác nhận để sinh flashcard.',
+        MaterialGenerationFailureCode.invalidRequest,
+        'Chọn loại học liệu và số lượng từ số loại đã chọn đến 30.',
       );
     }
-
-    return generationRepository.generateFlashcards(
+    final review = await ocrRepository.getOcrReview(documentId);
+    final eligible = <SourceBlock>[
+      for (final page in review.pageReviews)
+        for (final block in page.blocks)
+          if (block.documentId == documentId &&
+              block.pageId == page.pageId &&
+              block.pageNumber == page.pageNumber &&
+              !block.isDeleted &&
+              (block.isVerified || block.isUserAdded) &&
+              block.normalizedText.trim().isNotEmpty &&
+              (selectedBlockIds.isEmpty ||
+                  selectedBlockIds.contains(block.blockId)))
+            block,
+    ];
+    if (eligible.isEmpty) {
+      throw const MaterialGenerationFailure(
+        MaterialGenerationFailureCode.invalidRequest,
+        'Cần hoàn tất OCR và xác nhận đoạn nguồn có nội dung.',
+      );
+    }
+    if (eligible.fold<int>(0, (sum, b) => sum + b.normalizedText.length) >
+        100000) {
+      throw const MaterialGenerationFailure(
+        MaterialGenerationFailureCode.payloadTooLarge,
+        'Nguồn vượt 100.000 ký tự. Vui lòng chọn ít đoạn hơn.',
+      );
+    }
+    return generationRepository.generateMaterials(
       documentId: documentId,
-      format: format,
+      types: types,
+      quantityMode: quantityMode,
       desiredCount: desiredCount,
-      sourceBlocks: eligibleBlocks,
+      sourceBlocks: eligible,
     );
   }
 }

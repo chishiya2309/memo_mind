@@ -209,125 +209,119 @@ void main() {
     },
   );
 
-  test(
-    'version 4 data migrates to v5 with decks and cards tables',
-    () async {
-      final db = await databaseFactoryFfi.openDatabase(inMemoryDatabasePath);
-      addTearDown(db.close);
-      await db.execute('PRAGMA foreign_keys = ON');
+  test('version 4 data migrates through v6 while preserving legacy cards', () async {
+    final db = await databaseFactoryFfi.openDatabase(inMemoryDatabasePath);
+    addTearDown(db.close);
+    await db.execute('PRAGMA foreign_keys = ON');
 
-      // Create V4 schema
-      await MemoMindDatabase.createV4(db);
+    // Create V4 schema
+    await MemoMindDatabase.createV4(db);
 
-      // Insert prerequisites
-      await db.insert('documents', {
-        'document_id': 'doc-v5',
-        'title': 'Tài liệu ôn thi',
-        'status': 'ready_for_generation',
-        'privacy': 'private',
-        'page_count': 1,
-        'created_at': 10,
-        'updated_at': 10,
-      });
+    // Insert prerequisites
+    await db.insert('documents', {
+      'document_id': 'doc-v5',
+      'title': 'Tài liệu ôn thi',
+      'status': 'ready_for_generation',
+      'privacy': 'private',
+      'page_count': 1,
+      'created_at': 10,
+      'updated_at': 10,
+    });
 
-      await db.insert('source_pages', {
-        'page_id': 'page-v5',
-        'document_id': 'doc-v5',
-        'page_number': 1,
-        'original_page_number': 1,
-        'source': 'camera',
-        'data_relative_path': 'data/page1.jpg',
-        'mime_type': 'image/jpeg',
-        'file_size_bytes': 1000,
-        'width': 800,
-        'height': 600,
-        'sha256': 'dummy',
-        'quality_code': 'good',
-        'quality_warning_accepted': 0,
-        'created_at': 10,
-        'normalization_status': 'source_ready',
-      });
+    await db.insert('source_pages', {
+      'page_id': 'page-v5',
+      'document_id': 'doc-v5',
+      'page_number': 1,
+      'original_page_number': 1,
+      'source': 'camera',
+      'data_relative_path': 'data/page1.jpg',
+      'mime_type': 'image/jpeg',
+      'file_size_bytes': 1000,
+      'width': 800,
+      'height': 600,
+      'sha256': 'dummy',
+      'quality_code': 'good',
+      'quality_warning_accepted': 0,
+      'created_at': 10,
+      'normalization_status': 'source_ready',
+    });
 
-      await db.insert('source_blocks', {
-        'block_id': 'blk-v5',
-        'document_id': 'doc-v5',
-        'page_id': 'page-v5',
-        'page_number': 1,
-        'order_index': 0,
-        'raw_text': 'Nội dung khối nguồn',
-        'normalized_text': 'Nội dung khối nguồn đã chuẩn hóa',
-        'box_left': 0.1,
-        'box_top': 0.1,
-        'box_width': 0.8,
-        'box_height': 0.2,
-        'has_valid_box': 1,
-        'confidence': 0.95,
-        'confidence_source': 'mlkit',
-        'status': 'verified',
-        'created_at': 10,
-        'updated_at': 10,
-      });
+    await db.insert('source_blocks', {
+      'block_id': 'blk-v5',
+      'document_id': 'doc-v5',
+      'page_id': 'page-v5',
+      'page_number': 1,
+      'order_index': 0,
+      'raw_text': 'Nội dung khối nguồn',
+      'normalized_text': 'Nội dung khối nguồn đã chuẩn hóa',
+      'box_left': 0.1,
+      'box_top': 0.1,
+      'box_width': 0.8,
+      'box_height': 0.2,
+      'has_valid_box': 1,
+      'confidence': 0.95,
+      'confidence_source': 'mlkit',
+      'status': 'verified',
+      'created_at': 10,
+      'updated_at': 10,
+    });
 
-      // Migrate to V5
-      await MemoMindDatabase.migrateV4ToV5(db);
+    // Migrate to V5
+    await MemoMindDatabase.migrateV4ToV5(db);
 
-      // Insert deck
-      await db.insert('decks', {
-        'deck_id': 'deck-v5',
-        'title': 'Bộ thẻ Lịch sử',
-        'description': 'Mô tả bộ thẻ',
-        'tone': 'indigo',
-        'card_count': 1,
-        'created_at': 20,
-        'updated_at': 20,
-      });
+    // Insert deck
+    await db.insert('decks', {
+      'deck_id': 'deck-v5',
+      'title': 'Bộ thẻ Lịch sử',
+      'description': 'Mô tả bộ thẻ',
+      'tone': 'indigo',
+      'card_count': 1,
+      'created_at': 20,
+      'updated_at': 20,
+    });
 
-      // Insert card with source attribution
-      await db.insert('cards', {
-        'card_id': 'card-v5',
-        'deck_id': 'deck-v5',
-        'type': 'flashcard',
-        'format': 'qa',
-        'question': 'Nội dung câu hỏi?',
-        'answer': 'Câu trả lời chuẩn',
-        'source_document_id': 'doc-v5',
-        'source_page_id': 'page-v5',
-        'source_page_number': 1,
-        'source_block_id': 'blk-v5',
-        'source_quote': 'khối nguồn đã chuẩn hóa',
-        'confidence': 0.9,
-        'status': 'active',
-        'repetitions': 0,
-        'interval_days': 0,
-        'ease_factor': 2.5,
-        'due_date': 30,
-        'created_at': 20,
-        'updated_at': 20,
-      });
+    // Insert card with source attribution
+    await db.insert('cards', {
+      'card_id': 'card-v5',
+      'deck_id': 'deck-v5',
+      'type': 'flashcard',
+      'format': 'qa',
+      'question': 'Nội dung câu hỏi?',
+      'answer': 'Câu trả lời chuẩn',
+      'source_document_id': 'doc-v5',
+      'source_page_id': 'page-v5',
+      'source_page_number': 1,
+      'source_block_id': 'blk-v5',
+      'source_quote': 'khối nguồn đã chuẩn hóa',
+      'confidence': 0.9,
+      'status': 'active',
+      'repetitions': 0,
+      'interval_days': 0,
+      'ease_factor': 2.5,
+      'due_date': 30,
+      'created_at': 20,
+      'updated_at': 20,
+    });
 
-      final cards = await db.query(
-        'cards',
-        where: 'deck_id = ?',
-        whereArgs: ['deck-v5'],
-      );
-      expect(cards.length, 1);
-      expect(cards.first['source_block_id'], 'blk-v5');
-      expect(cards.first['source_quote'], 'khối nguồn đã chuẩn hóa');
+    await MemoMindDatabase.migrateV5ToV6(db);
 
-      // Test Cascade delete when Deck is deleted
-      await db.delete(
-        'decks',
-        where: 'deck_id = ?',
-        whereArgs: ['deck-v5'],
-      );
-      expect(
-        await db.query(
-          'cards',
-          where: 'deck_id = ?',
-          whereArgs: ['deck-v5'],
-        ),
-        isEmpty,
-      );
-    },
-  );
+    final cards = await db.query(
+      'cards',
+      where: 'deck_id = ?',
+      whereArgs: ['deck-v5'],
+    );
+    expect(cards.length, 1);
+    expect(cards.first['type'], 'BASIC');
+    expect(cards.first['front'], 'Nội dung câu hỏi?');
+    expect(cards.first['back'], 'Câu trả lời chuẩn');
+    expect(cards.first['source_block_id'], 'blk-v5');
+    expect(cards.first['source_quote'], 'khối nguồn đã chuẩn hóa');
+
+    // Test Cascade delete when Deck is deleted
+    await db.delete('decks', where: 'deck_id = ?', whereArgs: ['deck-v5']);
+    expect(
+      await db.query('cards', where: 'deck_id = ?', whereArgs: ['deck-v5']),
+      isEmpty,
+    );
+  });
 }

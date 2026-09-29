@@ -16,14 +16,15 @@ class MemoMindDatabase {
     final root = await getDatabasesPath();
     return openDatabase(
       p.join(root, 'memo_mind.db'),
-      version: 5,
+      version: 6,
       onConfigure: (db) async => db.execute('PRAGMA foreign_keys = ON'),
-      onCreate: (db, version) => createV5(db),
+      onCreate: (db, version) => createV6(db),
       onUpgrade: (db, oldVersion, newVersion) async {
         if (oldVersion < 2) await migrateV1ToV2(db);
         if (oldVersion < 3) await migrateV2ToV3(db);
         if (oldVersion < 4) await migrateV3ToV4(db);
         if (oldVersion < 5) await migrateV4ToV5(db);
+        if (oldVersion < 6) await migrateV5ToV6(db);
       },
     );
   }
@@ -435,6 +436,63 @@ class MemoMindDatabase {
     await db.execute(
       'CREATE INDEX idx_source_blocks_doc ON source_blocks(document_id)',
     );
+  }
+
+  static Future<void> createV6(DatabaseExecutor db) async {
+    await createV5(db);
+    await migrateV5ToV6(db);
+  }
+
+  static Future<void> migrateV5ToV6(DatabaseExecutor db) async {
+    await db.execute('ALTER TABLE cards RENAME TO cards_v5');
+    for (final index in [
+      'idx_cards_deck_id',
+      'idx_cards_source_block_id',
+      'idx_cards_due_date',
+    ]) {
+      await db.execute('DROP INDEX IF EXISTS $index');
+    }
+    await db.execute("""
+      CREATE TABLE cards (
+        card_id TEXT PRIMARY KEY, deck_id TEXT NOT NULL,
+        type TEXT NOT NULL CHECK(type IN ('BASIC','CLOZE','MCQ')),
+        front TEXT NOT NULL, back TEXT NOT NULL, mcq_payload TEXT,
+        source_document_id TEXT NOT NULL, source_page_id TEXT NOT NULL,
+        source_page_number INTEGER NOT NULL CHECK(source_page_number > 0),
+        source_block_id TEXT NOT NULL, source_quote TEXT NOT NULL,
+        confidence REAL CHECK(confidence IS NULL OR confidence BETWEEN 0 AND 1),
+        status TEXT NOT NULL CHECK(status IN ('active','suspended','deleted')),
+        repetitions INTEGER NOT NULL DEFAULT 0 CHECK(repetitions >= 0),
+        interval_days INTEGER NOT NULL DEFAULT 0 CHECK(interval_days >= 0),
+        ease_factor REAL NOT NULL DEFAULT 2.5 CHECK(ease_factor >= 1.3),
+        due_date INTEGER NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+        CHECK(type = 'MCQ' OR mcq_payload IS NULL),
+        CHECK(type != 'MCQ' OR status != 'active' OR mcq_payload IS NOT NULL),
+        FOREIGN KEY(deck_id) REFERENCES decks(deck_id) ON DELETE CASCADE,
+        FOREIGN KEY(source_document_id) REFERENCES documents(document_id) ON DELETE CASCADE,
+        FOREIGN KEY(source_block_id) REFERENCES source_blocks(block_id) ON DELETE CASCADE
+      )
+    """);
+    await db.execute("""
+      INSERT INTO cards (
+        card_id, deck_id, type, front, back,
+        source_document_id, source_page_id, source_page_number, source_block_id, source_quote,
+        confidence, status, repetitions, interval_days, ease_factor, due_date, created_at, updated_at
+      )
+      SELECT card_id, deck_id,
+        CASE WHEN type = 'mcq' THEN 'MCQ' WHEN format = 'cloze' THEN 'CLOZE' ELSE 'BASIC' END,
+        question, answer, source_document_id, source_page_id, source_page_number, source_block_id,
+        source_quote, confidence,
+        CASE WHEN type = 'mcq' AND status != 'deleted' THEN 'suspended' ELSE status END,
+        repetitions, interval_days, ease_factor, due_date, created_at, updated_at
+      FROM cards_v5
+    """);
+    await db.execute('DROP TABLE cards_v5');
+    await db.execute('CREATE INDEX idx_cards_deck_id ON cards(deck_id)');
+    await db.execute(
+      'CREATE INDEX idx_cards_source_block_id ON cards(source_block_id)',
+    );
+    await db.execute('CREATE INDEX idx_cards_due_date ON cards(due_date)');
   }
 
   Future<void> close() async {

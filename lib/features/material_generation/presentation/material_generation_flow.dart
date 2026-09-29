@@ -1,12 +1,11 @@
 import 'dart:io';
+
 import 'package:flutter/material.dart';
 
-import '../../../shared/theme/memo_theme.dart';
 import '../../deck_management/data/local_deck_repository.dart';
 import '../../deck_management/domain/deck_repository.dart';
 import '../../document_import/domain/document_import_models.dart';
 import '../../ocr_editor/data/local_ocr_repository.dart';
-import '../../ocr_editor/domain/ocr_models.dart';
 import '../../ocr_editor/domain/ocr_repository.dart';
 import '../application/generate_flashcards_use_case.dart';
 import '../data/remote_material_generation_repository.dart';
@@ -17,7 +16,6 @@ import 'material_generation_config_modal.dart';
 
 class MaterialGenerationFlow {
   const MaterialGenerationFlow._();
-
   static Future<void> start({
     required BuildContext context,
     required ImportedDocument document,
@@ -26,168 +24,120 @@ class MaterialGenerationFlow {
     MaterialGenerationRepository? generationRepository,
     Directory? storageDirectory,
   }) async {
-    final ocrRepo = ocrRepository ?? LocalOcrRepository();
-    final deckRepo = deckRepository ?? LocalDeckRepository();
-    final genRepo = generationRepository ?? RemoteMaterialGenerationRepository();
-
-    // 1. Fetch document review & verified blocks
-    final review = await ocrRepo.getOcrReview(document.documentId);
-    final verifiedBlocks = <SourceBlock>[];
-    final sourcePages = document.pages;
-
-    for (final pageReview in review.pageReviews) {
-      for (final block in pageReview.blocks) {
-        if (!block.isDeleted && (block.isVerified || block.isUserAdded)) {
-          verifiedBlocks.add(block);
+    final ocr = ocrRepository ?? LocalOcrRepository();
+    final decks = deckRepository ?? LocalDeckRepository();
+    final generation =
+        generationRepository ?? RemoteMaterialGenerationRepository();
+    try {
+      final review = await ocr.getOcrReview(document.documentId);
+      final blocks = [
+        for (final page in review.pageReviews)
+          for (final b in page.blocks)
+            if (b.documentId == document.documentId &&
+                b.pageId == page.pageId &&
+                b.pageNumber == page.pageNumber &&
+                !b.isDeleted &&
+                (b.isVerified || b.isUserAdded) &&
+                b.normalizedText.trim().isNotEmpty)
+              b,
+      ];
+      if (!context.mounted) return;
+      if (blocks.isEmpty) {
+        throw const MaterialGenerationFailure(
+          MaterialGenerationFailureCode.invalidRequest,
+          'Hoàn tất OCR và xác nhận văn bản trước khi tạo học liệu.',
+        );
+      }
+      final selection = await MaterialGenerationConfigModal.show(
+        context,
+        documentId: document.documentId,
+        documentTitle: document.title,
+        verifiedBlocks: blocks,
+        deckRepository: decks,
+      );
+      if (selection == null || !context.mounted) return;
+      final deck = await decks.getDeckById(selection.deck.id);
+      if (!context.mounted) return;
+      if (deck == null) {
+        throw const MaterialGenerationFailure(
+          MaterialGenerationFailureCode.invalidRequest,
+          'Deck đích không còn tồn tại.',
+        );
+      }
+      final navigator = Navigator.of(context, rootNavigator: true);
+      final loading = DialogRoute<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => const PopScope(
+          canPop: false,
+          child: AlertDialog(
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                CircularProgressIndicator(),
+                SizedBox(height: 16),
+                Text('Đang tạo và kiểm tra học liệu…'),
+              ],
+            ),
+          ),
+        ),
+      );
+      navigator.push(loading);
+      late final MaterialGenerationResult result;
+      try {
+        result =
+            await GenerateMaterialsUseCase(
+              ocrRepository: ocr,
+              generationRepository: generation,
+            ).execute(
+              documentId: document.documentId,
+              types: selection.config.types,
+              quantityMode: selection.config.quantityMode,
+              desiredCount: selection.config.desiredCount,
+              selectedBlockIds: selection.config.selectedBlockIds,
+            );
+      } finally {
+        if (loading.isActive && navigator.mounted) {
+          navigator.removeRoute(loading);
         }
       }
-    }
-
-    if (!context.mounted) return;
-
-    if (verifiedBlocks.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Tài liệu chưa có đoạn văn bản nào được xác nhận. Vui lòng xác nhận văn bản trước khi tạo học liệu.',
-          ),
-        ),
-      );
-      return;
-    }
-
-    // 2. Open config modal
-    final config = await MaterialGenerationConfigModal.show(
-      context,
-      documentTitle: document.title,
-      verifiedBlocks: verifiedBlocks,
-    );
-
-    if (config == null || !context.mounted) return;
-
-    await _executeGeneration(
-      context: context,
-      document: document,
-      format: config.format,
-      count: config.count,
-      selectedBlockIds: config.selectedBlockIds,
-      verifiedBlocks: verifiedBlocks,
-      sourcePages: sourcePages,
-      ocrRepo: ocrRepo,
-      deckRepo: deckRepo,
-      genRepo: genRepo,
-      storageDirectory: storageDirectory,
-    );
-  }
-
-  static Future<void> _executeGeneration({
-    required BuildContext context,
-    required ImportedDocument document,
-    required FlashcardFormat format,
-    required int count,
-    required Set<String> selectedBlockIds,
-    required List<SourceBlock> verifiedBlocks,
-    required List<SourcePage> sourcePages,
-    required OcrRepository ocrRepo,
-    required DeckRepository deckRepo,
-    required MaterialGenerationRepository genRepo,
-    Directory? storageDirectory,
-  }) async {
-    final palette = MemoPalette.of(context);
-
-    // Show loading indicator
-    showDialog<void>(
-      context: context,
-      barrierDismissible: false,
-      builder: (ctx) => Center(
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
-          decoration: BoxDecoration(
-            color: palette.surface,
-            borderRadius: BorderRadius.circular(16),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.1),
-                blurRadius: 16,
-              ),
-            ],
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              CircularProgressIndicator(color: palette.primary),
-              const SizedBox(height: 16),
-              Text(
-                'Đang tạo flashcard bằng AI...',
-                style: TextStyle(
-                  fontWeight: FontWeight.bold,
-                  fontSize: 14,
-                  color: palette.text,
-                ),
-              ),
-              const SizedBox(height: 4),
-              Text(
-                'Đang kiểm định nguồn và cấu trúc thẻ',
-                style: TextStyle(fontSize: 12, color: palette.textMuted),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-
-    final useCase = GenerateFlashcardsUseCase(
-      ocrRepository: ocrRepo,
-      generationRepository: genRepo,
-    );
-
-    try {
-      final result = await useCase.execute(
-        documentId: document.documentId,
-        format: format,
-        desiredCount: count,
-        selectedBlockIds: selectedBlockIds,
-      );
-
       if (!context.mounted) return;
-      Navigator.of(context, rootNavigator: true).pop(); // Dismiss loading dialog
-
-      // Navigate to Review Approval Screen
-      Navigator.of(context).push(
+      if (result.cards.isEmpty) {
+        throw const MaterialGenerationFailure(
+          MaterialGenerationFailureCode.noValidCards,
+          'Không có học liệu đạt kiểm tra.',
+        );
+      }
+      await Navigator.of(context).push(
         MaterialPageRoute<void>(
           builder: (_) => FlashcardReviewApprovalScreen(
             documentId: document.documentId,
             documentTitle: document.title,
+            targetDeck: deck,
             initialCards: result.cards,
-            sourceBlocks: verifiedBlocks,
-            sourcePages: sourcePages,
-            deckRepository: deckRepo,
-            ocrRepository: ocrRepo,
-            generationRepository: genRepo,
+            sourceBlocks: blocks,
+            sourcePages: review.document.pages,
+            deckRepository: decks,
+            ocrRepository: ocr,
+            generationRepository: generation,
             discardedCount: result.discardedCount,
             warnings: result.warnings,
             storageDirectory: storageDirectory,
           ),
         ),
       );
-    } on MaterialGenerationFailure catch (e) {
-      if (!context.mounted) return;
-      Navigator.of(context, rootNavigator: true).pop(); // Dismiss loading dialog
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(e.message),
-          backgroundColor: palette.error,
-        ),
-      );
-    } catch (e) {
-      if (!context.mounted) return;
-      Navigator.of(context, rootNavigator: true).pop(); // Dismiss loading dialog
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Lỗi trong quá trình tạo flashcard: $e'),
-          backgroundColor: palette.error,
-        ),
-      );
+    } catch (error) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              error is MaterialGenerationFailure
+                  ? error.message
+                  : 'Không thể tạo học liệu. Vui lòng thử lại.',
+            ),
+          ),
+        );
+      }
     }
   }
 }

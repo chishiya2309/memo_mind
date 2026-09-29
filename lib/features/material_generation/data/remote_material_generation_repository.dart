@@ -3,47 +3,37 @@ import '../domain/material_generation_models.dart';
 import '../domain/material_generation_repository.dart';
 import 'material_generation_api_client.dart';
 
-class RemoteMaterialGenerationRepository implements MaterialGenerationRepository {
-  RemoteMaterialGenerationRepository({
-    MaterialGenerationApiClient? apiClient,
-  }) : _apiClient = apiClient ?? MaterialGenerationApiClient();
-
+class RemoteMaterialGenerationRepository
+    implements MaterialGenerationRepository {
+  RemoteMaterialGenerationRepository({MaterialGenerationApiClient? apiClient})
+    : _apiClient = apiClient ?? MaterialGenerationApiClient();
   final MaterialGenerationApiClient _apiClient;
-
   @override
-  Future<FlashcardGenerationResult> generateFlashcards({
+  Future<MaterialGenerationResult> generateMaterials({
     required String documentId,
-    required FlashcardFormat format,
-    required int desiredCount,
+    required Set<CardType> types,
+    QuantityMode quantityMode = QuantityMode.auto,
+    int? desiredCount,
     required List<SourceBlock> sourceBlocks,
-  }) {
-    return _apiClient.generateFlashcards(
-      documentId: documentId,
-      format: format,
-      desiredCount: desiredCount,
-      sourceBlocks: sourceBlocks,
-    );
-  }
-
+  }) => _apiClient.generateMaterials(
+    documentId: documentId,
+    types: types,
+    quantityMode: quantityMode,
+    desiredCount: desiredCount,
+    sourceBlocks: sourceBlocks,
+  );
   @override
-  Future<FlashcardDraft> regenerateSingleCard({
+  Future<MaterialDraft> regenerateSingleCard({
     required SourceBlock sourceBlock,
-    required FlashcardFormat format,
+    required CardType type,
   }) async {
-    final result = await _apiClient.generateFlashcards(
+    final result = await generateMaterials(
       documentId: sourceBlock.documentId,
-      format: format,
+      types: {type},
+      quantityMode: QuantityMode.manual,
       desiredCount: 1,
       sourceBlocks: [sourceBlock],
     );
-
-    if (result.cards.isEmpty) {
-      throw const MaterialGenerationFailure(
-        MaterialGenerationFailureCode.noValidCards,
-        'Không thể tạo lại thẻ từ khối nguồn này. Vui lòng thử lại.',
-      );
-    }
-
     return result.cards.first;
   }
 }
