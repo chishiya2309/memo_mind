@@ -13,7 +13,7 @@ class MaterialGenerationApiClient {
   })  : _baseUrl = baseUrl ??
             const String.fromEnvironment(
               'BACKEND_BASE_URL',
-              defaultValue: 'http://10.0.2.2:8080',
+              defaultValue: 'https://api.leaselinkconnect.me',
             ),
         _client = httpClient ?? http.Client();
 
@@ -64,7 +64,7 @@ class MaterialGenerationApiClient {
               headers: {'Content-Type': 'application/json'},
               body: payload,
             )
-            .timeout(const Duration(seconds: 40));
+            .timeout(const Duration(seconds: 90));
 
         final body = jsonDecode(utf8.decode(response.bodyBytes)) as Map<String, dynamic>;
 
@@ -151,7 +151,7 @@ class MaterialGenerationApiClient {
     throw MaterialGenerationFailure(
       MaterialGenerationFailureCode.networkUnavailable,
       'Không thể kết nối đến Backend AI MemoMind ($cleanBase).\n'
-      '• Nếu deploy Firebase Functions: Vui lòng kiểm tra BACKEND_BASE_URL.\n'
+      '• Nếu deploy AWS EC2: Vui lòng kiểm tra BACKEND_BASE_URL và trạng thái máy chủ.\n'
       '• Nếu chạy cục bộ trên điện thoại thật: Chạy "adb reverse tcp:8080 tcp:8080" và "cd functions; npm start".\n'
       '• Nếu chạy trên máy ảo: Chạy "cd functions; npm start".',
       lastNetworkError,
