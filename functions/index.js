@@ -35,12 +35,51 @@ try {
 }
 
 const app = express();
+// Trust only the local reverse proxy. This lets the rate limiter see the
+// original client IP from Nginx without trusting arbitrary forwarded headers.
+app.set('trust proxy', 'loopback');
 app.use(cors({ origin: true }));
 app.use(express.json({ limit: '2mb' }));
 
 const GROQ_API_KEY = process.env.GROQ_API_KEY || process.env.GEMINI_API_KEY;
 const GROQ_MODEL = process.env.GROQ_MODEL || process.env.GEMINI_MODEL || 'openai/gpt-oss-20b';
 const MAX_TOTAL_CHARACTERS = 100000; // Limit for a single batch request (Luồng 8a)
+const GENERATION_RATE_LIMIT = 10;
+const GENERATION_RATE_WINDOW_MS = 15 * 60 * 1000;
+const generationRateWindows = new Map();
+
+// A small in-memory fixed-window limiter is sufficient for this single-process
+// demo service. For multiple Node workers/instances, use a shared store.
+const rateLimitCleanup = setInterval(() => {
+  const now = Date.now();
+  for (const [ip, window] of generationRateWindows) {
+    if (window.expiresAt <= now) generationRateWindows.delete(ip);
+  }
+}, GENERATION_RATE_WINDOW_MS);
+rateLimitCleanup.unref();
+
+function limitGenerationRequests(req, res, next) {
+  const now = Date.now();
+  const ip = req.ip || req.socket.remoteAddress || 'unknown';
+  let window = generationRateWindows.get(ip);
+
+  if (!window || window.expiresAt <= now) {
+    window = { count: 0, expiresAt: now + GENERATION_RATE_WINDOW_MS };
+    generationRateWindows.set(ip, window);
+  }
+
+  if (window.count >= GENERATION_RATE_LIMIT) {
+    const retryAfterSeconds = Math.max(1, Math.ceil((window.expiresAt - now) / 1000));
+    res.set('Retry-After', String(retryAfterSeconds));
+    return res.status(429).json({
+      error: 'rate_limit_exceeded',
+      message: 'Bạn đã gửi quá nhiều yêu cầu. Vui lòng thử lại sau ít phút.'
+    });
+  }
+
+  window.count += 1;
+  return next();
+}
 
 app.get(['/health', '/api/health'], (req, res) => {
   res.json({
@@ -137,7 +176,7 @@ const FLASHCARD_RESPONSE_SCHEMA = {
 /**
  * POST /api/v1/materials/flashcards/generate (also supports /v1/materials/flashcards/generate)
  */
-app.post(['/api/v1/materials/flashcards/generate', '/v1/materials/flashcards/generate'], async (req, res) => {
+app.post(['/api/v1/materials/flashcards/generate', '/v1/materials/flashcards/generate'], limitGenerationRequests, async (req, res) => {
   if (!GROQ_API_KEY) {
     return res.status(503).json({
       error: 'backend_not_configured',
@@ -349,11 +388,10 @@ Quy tắc bắt buộc:
 });
 
 const PORT = process.env.PORT || 8080;
+const HOST = process.env.HOST || '0.0.0.0';
 if (require.main === module) {
-  app.listen(PORT, () => {
-    console.log(`MemoMind Backend running on port ${PORT} [Provider: Groq]`);
-    console.log(`API Key: ${GROQ_API_KEY ? 'Đã nhận (' + GROQ_API_KEY.substring(0, 8) + '...)' : 'CHƯA CẤU HÌNH'}`);
-    console.log(`Model: ${GROQ_MODEL}`);
+  app.listen(PORT, HOST, () => {
+    console.log(`MemoMind Backend listening on ${HOST}:${PORT}`);
   });
 }
 
