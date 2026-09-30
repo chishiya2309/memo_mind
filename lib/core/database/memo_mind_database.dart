@@ -16,15 +16,16 @@ class MemoMindDatabase {
     final root = await getDatabasesPath();
     return openDatabase(
       p.join(root, 'memo_mind.db'),
-      version: 6,
+      version: 7,
       onConfigure: (db) async => db.execute('PRAGMA foreign_keys = ON'),
-      onCreate: (db, version) => createV6(db),
+      onCreate: (db, version) => createV7(db),
       onUpgrade: (db, oldVersion, newVersion) async {
         if (oldVersion < 2) await migrateV1ToV2(db);
         if (oldVersion < 3) await migrateV2ToV3(db);
         if (oldVersion < 4) await migrateV3ToV4(db);
         if (oldVersion < 5) await migrateV4ToV5(db);
         if (oldVersion < 6) await migrateV5ToV6(db);
+        if (oldVersion < 7) await migrateV6ToV7(db);
       },
     );
   }
@@ -493,6 +494,56 @@ class MemoMindDatabase {
       'CREATE INDEX idx_cards_source_block_id ON cards(source_block_id)',
     );
     await db.execute('CREATE INDEX idx_cards_due_date ON cards(due_date)');
+  }
+
+  static Future<void> createV7(DatabaseExecutor db) async {
+    await createV6(db);
+    await migrateV6ToV7(db);
+  }
+
+  static Future<void> migrateV6ToV7(DatabaseExecutor db) async {
+    await db.execute(
+      'CREATE TABLE app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)',
+    );
+    await db.execute('''
+      CREATE TABLE review_sessions (
+        session_id TEXT PRIMARY KEY,
+        deck_id TEXT,
+        due_only INTEGER NOT NULL CHECK(due_only IN (0,1)),
+        queue TEXT NOT NULL,
+        learning_queue TEXT NOT NULL,
+        initial_count INTEGER NOT NULL,
+        status TEXT NOT NULL CHECK(status IN ('active','completed','ended')),
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      )
+    ''');
+    // Keep history when a source/card is deleted. IDs are historical references.
+    await db.execute('''
+      CREATE TABLE review_events (
+        sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+        event_id TEXT NOT NULL UNIQUE,
+        session_id TEXT NOT NULL,
+        card_id TEXT NOT NULL,
+        device_id TEXT NOT NULL,
+        reviewed_at INTEGER NOT NULL,
+        rating TEXT NOT NULL CHECK(rating IN ('again','hard','good','easy')),
+        FOREIGN KEY(session_id) REFERENCES review_sessions(session_id)
+      )
+    ''');
+    await db.execute(
+      'CREATE INDEX idx_review_events_session ON review_events(session_id, sequence)',
+    );
+    await db.execute(
+      'CREATE INDEX idx_review_events_date ON review_events(reviewed_at, card_id)',
+    );
+    await db.execute(
+      'CREATE INDEX idx_cards_active_due ON cards(status, due_date)',
+    );
+    // Only one unfinished session; restarting the app resumes the same queue.
+    await db.execute(
+      "CREATE UNIQUE INDEX idx_review_active_session ON review_sessions(status) WHERE status = 'active'",
+    );
   }
 
   Future<void> close() async {
