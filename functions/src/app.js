@@ -2,6 +2,45 @@ const express = require('express');
 const cors = require('cors');
 const { createProviders } = require('./providers');
 const { ApiError, validateRequest, filterCards, parseEnvelope } = require('./validation');
+const MAX_BATCH_CHARS = 8000;
+const MAX_AUTO_CARDS_PER_BATCH = 4;
+
+function splitLongText(text, maxChars) {
+  const pieces = [];
+  let remaining = text;
+  while (remaining.length > maxChars) {
+    let splitAt = -1;
+    for (const delimiter of ['\n', ' ', '。', '.', '！', '!', '？', '?', '；', ';']) {
+      const candidate = remaining.lastIndexOf(delimiter, maxChars);
+      if (candidate > maxChars * 0.6) splitAt = Math.max(splitAt, candidate + delimiter.length);
+    }
+    if (splitAt <= 0) splitAt = maxChars;
+    pieces.push(remaining.slice(0, splitAt));
+    remaining = remaining.slice(splitAt);
+  }
+  if (remaining.length) pieces.push(remaining);
+  return pieces;
+}
+
+function batchSourceBlocks(sourceBlocks) {
+  const batches = [];
+  let batch = [];
+  let batchChars = 0;
+  for (const block of sourceBlocks) {
+    for (const text of splitLongText(block.normalizedText, MAX_BATCH_CHARS)) {
+      if (batch.length && batchChars + text.length > MAX_BATCH_CHARS) {
+        batches.push(batch);
+        batch = [];
+        batchChars = 0;
+      }
+      batch.push({ ...block, normalizedText: text });
+      batchChars += text.length;
+    }
+  }
+  if (batch.length) batches.push(batch);
+  return batches;
+}
+
 async function withinDeadline(work, milliseconds) {
   const controller = new AbortController(); let timer;
   try {
@@ -40,11 +79,23 @@ function createApp({ providers = createProviders(), deadlineMs = 75000, rateLimi
     }
     const request = validateRequest(body);
     const rawCards = await withinDeadline(async signal => {
-      const first = await providers.generate(request, signal);
-      let parsed = parseEnvelope(first);
-      if (parsed === null) parsed = parseEnvelope(await providers.generate(request, signal, first));
-      if (parsed === null) throw new ApiError(502, 'invalid_llm_output', 'AI trả dữ liệu sai định dạng sau một lần sửa.');
-      return parsed;
+      const batches = batchSourceBlocks(request.sourceBlocks);
+      const totalChars = request.sourceBlocks.reduce((total, block) => total + block.normalizedText.length, 0);
+      const cards = [];
+      for (const sourceBlocks of batches) {
+        const batchChars = sourceBlocks.reduce((total, block) => total + block.normalizedText.length, 0);
+        const allocatedLimit = Math.max(1, Math.ceil(request.limit * batchChars / totalChars));
+        const batchLimit = request.quantityMode === 'auto'
+          ? Math.min(MAX_AUTO_CARDS_PER_BATCH, allocatedLimit)
+          : allocatedLimit;
+        const batchRequest = { ...request, sourceBlocks, limit: batchLimit };
+        const first = await providers.generate(batchRequest, signal);
+        let parsed = parseEnvelope(first);
+        if (parsed === null) parsed = parseEnvelope(await providers.generate(batchRequest, signal, first));
+        if (parsed === null) throw new ApiError(502, 'invalid_llm_output', 'AI trả dữ liệu sai định dạng sau một lần sửa.');
+        cards.push(...parsed);
+      }
+      return cards;
     }, deadlineMs);
     const result = filterCards(rawCards, request);
     if (!result.cards.length) return res.status(422).json({ ...result, error: 'no_valid_cards', message: 'Không có học liệu đạt kiểm tra nguồn và cấu trúc.' });
