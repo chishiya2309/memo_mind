@@ -9,9 +9,18 @@ async function providerJson(fetchImpl, url, options) {
   }
   if (response.status === 429) throw new ApiError(429, 'provider_quota', 'Dịch vụ AI đang quá tải hoặc hết hạn mức.');
   if ([401, 403].includes(response.status)) throw new ApiError(503, 'backend_not_configured', 'Cấu hình dịch vụ AI không hợp lệ.');
-  if (!response.ok) throw new ApiError(502, 'provider_unavailable', 'Dịch vụ AI chưa sẵn sàng.');
-  try { return await response.json(); }
+  let body;
+  try { body = await response.json(); }
   catch { throw new ApiError(502, 'invalid_provider_response', 'Phản hồi dịch vụ AI không hợp lệ.'); }
+  if (!response.ok) {
+    // Groq can reject GPT-OSS generations with this 400 even when strict JSON
+    // schema output is enabled. The caller retries once in JSON object mode.
+    if (body?.error?.code === 'json_validate_failed') {
+      throw new ApiError(502, 'json_validate_failed', 'Mô hình không tạo được JSON theo schema.');
+    }
+    throw new ApiError(502, 'provider_unavailable', 'Dịch vụ AI chưa sẵn sàng.');
+  }
+  return body;
 }
 function createProviders(env = process.env, fetchImpl = fetch) {
   return {
@@ -32,12 +41,32 @@ function createProviders(env = process.env, fetchImpl = fetch) {
       if (previous !== undefined) messages.push(
         { role: 'assistant', content: previous },
         { role: 'user', content: 'Sửa duy nhất định dạng JSON thành object {"cards": [...]}, tuân thủ schema. Không thêm thông tin ngoài nguồn.' });
-      const body = await providerJson(fetchImpl, 'https://api.groq.com/openai/v1/chat/completions', {
-        method: 'POST', signal,
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${env.GROQ_API_KEY}` },
-        body: JSON.stringify({ model: env.GROQ_MODEL || 'openai/gpt-oss-20b', messages,
-          response_format: { type: 'json_schema', json_schema: { name: 'materials', strict: true, schema: responseSchema } }, temperature: 0.2 }),
-      });
+      const call = jsonObjectMode => {
+        const callMessages = messages.map(message => ({ ...message }));
+        if (jsonObjectMode) {
+          callMessages[0].content +=
+            ' Chỉ trả về một JSON object hợp lệ theo dạng {"cards":[...]}. ' +
+            'Mỗi card phải có đủ các trường type, front, back, sourceBlockId, sourcePage, sourceQuote, confidence, options, correctOptionId, explanation. ' +
+            'Các trường không áp dụng phải là null; không thêm trường khác.';
+        }
+        return providerJson(fetchImpl, 'https://api.groq.com/openai/v1/chat/completions', {
+          method: 'POST', signal,
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${env.GROQ_API_KEY}` },
+          body: JSON.stringify({ model: env.GROQ_MODEL || 'openai/gpt-oss-20b', messages: callMessages,
+            max_completion_tokens: 8192,
+            response_format: jsonObjectMode
+              ? { type: 'json_object' }
+              : { type: 'json_schema', json_schema: { name: 'materials', strict: true, schema: responseSchema } },
+            temperature: 0.2 }),
+        });
+      };
+      let body;
+      try {
+        body = await call(false);
+      } catch (error) {
+        if (!(error instanceof ApiError) || error.code !== 'json_validate_failed') throw error;
+        body = await call(true);
+      }
       return body?.choices?.[0]?.message?.content ?? '';
     },
     async enhance(body, signal) {
