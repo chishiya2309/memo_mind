@@ -463,7 +463,7 @@ class LocalDeckRepository implements DeckRepository {
       whereArgs: [deckId, 'deleted'],
       orderBy: 'created_at ASC',
     );
-    return rows.map(_mapCard).toList();
+    return rows.map(cardFromRow).toList();
   }
 
   Deck _mapDeck(Map<String, dynamic> row) {
@@ -499,6 +499,8 @@ class LocalDeckRepository implements DeckRepository {
       updatedAt: DateTime.fromMillisecondsSinceEpoch(row['updated_at'] as int),
     );
   }
+
+  static CardEntity cardFromRow(Map<String, dynamic> row) {
 
   SourceBlock _mapSourceBlockRow(Map<String, dynamic> row) {
     final left = row['box_left'] as num?;
@@ -644,9 +646,9 @@ class LocalDeckRepository implements DeckRepository {
       sourceQuote: row['source_quote'] as String,
       confidence: (row['confidence'] as num?)?.toDouble(),
       status: CardStatus.values.byName(row['status'] as String),
-      repetitions: row['repetitions'] as int,
-      intervalDays: row['interval_days'] as int,
-      easeFactor: (row['ease_factor'] as num).toDouble(),
+      repetitions: (row['repetitions'] as int?) ?? 0,
+      intervalDays: (row['interval_days'] as int?) ?? 0,
+      easeFactor: (row['ease_factor'] as num?)?.toDouble() ?? 2.5,
       dueDate: DateTime.fromMillisecondsSinceEpoch(row['due_date'] as int),
       createdAt: DateTime.fromMillisecondsSinceEpoch(row['created_at'] as int),
       updatedAt: DateTime.fromMillisecondsSinceEpoch(row['updated_at'] as int),

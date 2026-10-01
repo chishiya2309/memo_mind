@@ -503,6 +503,46 @@ class MemoMindDatabase {
 
   static Future<void> migrateV6ToV7(DatabaseExecutor db) async {
     await db.execute(
+      'CREATE TABLE app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)',
+    );
+    await db.execute('''
+      CREATE TABLE review_sessions (
+        session_id TEXT PRIMARY KEY,
+        deck_id TEXT,
+        due_only INTEGER NOT NULL CHECK(due_only IN (0,1)),
+        queue TEXT NOT NULL,
+        learning_queue TEXT NOT NULL,
+        initial_count INTEGER NOT NULL,
+        status TEXT NOT NULL CHECK(status IN ('active','completed','ended')),
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      )
+    ''');
+    // Keep history when a source/card is deleted. IDs are historical references.
+    await db.execute('''
+      CREATE TABLE review_events (
+        sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+        event_id TEXT NOT NULL UNIQUE,
+        session_id TEXT NOT NULL,
+        card_id TEXT NOT NULL,
+        device_id TEXT NOT NULL,
+        reviewed_at INTEGER NOT NULL,
+        rating TEXT NOT NULL CHECK(rating IN ('again','hard','good','easy')),
+        FOREIGN KEY(session_id) REFERENCES review_sessions(session_id)
+      )
+    ''');
+    await db.execute(
+      'CREATE INDEX idx_review_events_session ON review_events(session_id, sequence)',
+    );
+    await db.execute(
+      'CREATE INDEX idx_review_events_date ON review_events(reviewed_at, card_id)',
+    );
+    await db.execute(
+      'CREATE INDEX idx_cards_active_due ON cards(status, due_date)',
+    );
+    // Only one unfinished session; restarting the app resumes the same queue.
+    await db.execute(
+      "CREATE UNIQUE INDEX idx_review_active_session ON review_sessions(status) WHERE status = 'active'",
       "ALTER TABLE decks ADD COLUMN tags TEXT NOT NULL DEFAULT '[]'",
     );
     await db.execute(

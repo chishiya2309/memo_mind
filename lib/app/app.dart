@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 
-import '../features/home/data/demo_home_data.dart';
+import '../features/review/data/local_review_repository.dart';
+import '../features/review/presentation/review_session_screen.dart';
+import '../features/review/presentation/review_deck_selection_screen.dart';
 import '../features/home/domain/home_dashboard_data.dart';
 import '../features/home/presentation/home_screen.dart';
 import '../features/document_import/data/local_document_import_repository.dart';
@@ -25,6 +28,8 @@ class _MemoMindAppState extends State<MemoMindApp> {
   late final LocalDocumentImportRepository _importRepository;
   late final DeckRepository _deckRepository;
   late final Future<void> _recovery;
+  final _reviewRepository = LocalReviewRepository();
+  late Future<HomeDashboardData> _dashboard;
 
   @override
   void initState() {
@@ -32,6 +37,34 @@ class _MemoMindAppState extends State<MemoMindApp> {
     _importRepository = LocalDocumentImportRepository();
     _deckRepository = LocalDeckRepository();
     _recovery = _importRepository.recoverInterruptedImports();
+    _dashboard = _loadDashboard();
+  }
+
+  Future<HomeDashboardData> _loadDashboard() async {
+    await _recovery;
+    if (kIsWeb) {
+      return HomeDashboardData(
+        now: DateTime.now(),
+        review: const ReviewPlan(
+          totalToday: 0,
+          reviewedToday: 0,
+          deckCount: 0,
+          estimatedMinutes: 0,
+        ),
+        totalDeckCount: 0,
+      );
+    }
+    return _reviewRepository.getDashboard();
+  }
+
+  void _refreshDashboard() {
+    if (!mounted) return;
+
+    final dashboardFuture = _loadDashboard();
+
+    setState(() {
+      _dashboard = dashboardFuture;
+    });
   }
 
   @override
@@ -60,8 +93,8 @@ class _MemoMindAppState extends State<MemoMindApp> {
           );
         }
 
-        void startImageImport(DocumentImageSource source) {
-          Navigator.of(context).push(
+        Future<void> startImageImport(DocumentImageSource source) async {
+          await Navigator.of(context).push(
             MaterialPageRoute<void>(
               builder: (_) => DocumentImportFlow(
                 initialSource: source,
@@ -69,15 +102,40 @@ class _MemoMindAppState extends State<MemoMindApp> {
               ),
             ),
           );
+          _refreshDashboard();
         }
 
-        void startPdfImport() {
-          Navigator.of(context).push(
+        Future<void> startPdfImport() async {
+          await Navigator.of(context).push(
             MaterialPageRoute<void>(
               builder: (_) => PdfImportFlow(repository: _importRepository),
             ),
           );
+          _refreshDashboard();
         }
+
+        Future<void> openReview({String? deckId}) async {
+          await Navigator.of(context).push(
+            MaterialPageRoute<void>(
+              builder: (_) =>
+                  ReviewSessionScreen(deckId: deckId, dueOnly: deckId == null),
+            ),
+          );
+          _refreshDashboard();
+        }
+
+        Future<void> selectReviewDeck({bool dueOnly = false}) async {
+          await Navigator.of(context).push(
+            MaterialPageRoute<void>(
+              builder: (_) => ReviewDeckSelectionScreen(dueOnly: dueOnly),
+            ),
+          );
+          _refreshDashboard();
+        }
+
+
+        return FutureBuilder<HomeDashboardData>(
+          future: _dashboard,
 
         void openDeck(String deckId) {
           Navigator.of(context).push<void>(
@@ -110,6 +168,29 @@ class _MemoMindAppState extends State<MemoMindApp> {
               );
             }
             return HomeScreen(
+
+              data:
+                  snapshot.data ??
+                  HomeDashboardData(
+                    now: DateTime.now(),
+                    review: const ReviewPlan(
+                      totalToday: 0,
+                      reviewedToday: 0,
+                      deckCount: 0,
+                      estimatedMinutes: 0,
+                    ),
+                    totalDeckCount: 0,
+                    loadState: HomeLoadState.error,
+                    loadError:
+                        'Không thể tải dữ liệu cục bộ. Vui lòng thử lại.',
+                  ),
+              actions: HomeActions(
+                onStartReview: () => openReview(),
+                onFreeReview: () => selectReviewDeck(),
+                onOpenDueDecks: () => selectReviewDeck(dueOnly: true),
+                onOpenDeck: (id) => openReview(deckId: id),
+                onStartDeckReview: (id) => openReview(deckId: id),
+
               data: demoHomeDashboard(),
               libraryRepository: _deckRepository,
               actions: HomeActions(
@@ -125,8 +206,8 @@ class _MemoMindAppState extends State<MemoMindApp> {
                 onOpenApprovals: () => openPlaceholder('Duyệt thẻ AI'),
                 onOpenJob: (_) => openPlaceholder('Tác vụ học liệu'),
                 onRetrySync: () => showUnimplemented('Đồng bộ'),
-                onRetryLoad: () => showUnimplemented('Tải dữ liệu'),
-                onImport: (source) {
+                onRetryLoad: _refreshDashboard,
+                onImport: (source) async {
                   switch (source) {
                     case ImportSource.camera:
                       return startImageImport(DocumentImageSource.camera);

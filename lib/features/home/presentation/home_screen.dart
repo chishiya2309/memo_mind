@@ -192,6 +192,14 @@ class _HomeDashboard extends StatelessWidget {
                         onCreate: onCreate,
                         onImport: actions.onImport,
                       ),
+                      if (data.hasActiveReviewSession) ...[
+                        const SizedBox(height: 12),
+                        OutlinedButton.icon(
+                          onPressed: actions.onStartReview,
+                          icon: const Icon(Icons.play_arrow),
+                          label: const Text('Tiếp tục phiên ôn đang dở'),
+                        ),
+                      ],
                       if (data.pendingApprovalCount > 0) ...[
                         const SizedBox(height: 16),
                         _ApprovalCard(
