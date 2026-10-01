@@ -118,6 +118,7 @@ class HomeDashboardData {
     this.pendingSyncChanges = 0,
     this.loadState = HomeLoadState.ready,
     this.loadError,
+    this.hasActiveReviewSession = false,
   });
 
   final DateTime now;
@@ -135,4 +136,5 @@ class HomeDashboardData {
   final int pendingSyncChanges;
   final HomeLoadState loadState;
   final String? loadError;
+  final bool hasActiveReviewSession;
 }

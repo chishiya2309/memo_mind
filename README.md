@@ -7,7 +7,7 @@ MemoMind AI is an Android focused Flutter app for turning lecture documents into
 - Imported pages, confirmed OCR source blocks, decks, and cards are stored in SQLite. Accepted cards retain a document, page, and source block link.
 - OCR runs on the device. Optional crop enhancement sends only the selected JPEG region to the Express API after user consent.
 - The Express API in `functions/` proxies Groq material generation and Gemini OCR enhancement. Provider API keys stay on the server and never ship in Flutter.
-- Review scheduling, cloud sync, and cross device replication remain future work.
+- Offline review uses an SM-2 scheduler. SQLite v7 stores each review event, card schedule, and session progress in one transaction. Cloud sync and cross device replication remain future work.
 
 ## Project layout
 
@@ -20,6 +20,7 @@ lib/
     ocr_editor/
     material_generation/  # Generate, verify, review, and save source linked materials
     deck_management/
+    review/               # Offline review, SM-2, persisted sessions and learning queue
 functions/
   src/                    # Express routes, schemas, provider adapters, validators
   test/                   # Provider mocked API tests
@@ -27,6 +28,19 @@ test/
   unit/
   widget/
 ```
+
+## Offline review (UC04–UC05)
+
+On Android, create and save cards through the existing import/OCR/generation flow, then use **Bắt đầu ôn**, **Ôn tự do**, or a deck's review action. Home reads deck and due-card counts from SQLite. An unfinished session exposes **Tiếp tục phiên ôn đang dở**, including when only Again cards remain.
+
+- Only active cards are reviewed. Due sessions select `due_date <= session start`; free review ignores the due date.
+- Flip a BASIC, CLOZE, or MCQ card to reveal its answer, then choose Again/Hard/Good/Easy (quality 1/3/4/5).
+- Initial schedule: EF 2.5, repetitions 0, interval 0. Successful intervals are 1 day, 6 days, then the previous interval multiplied by the previous EF, rounded to the nearest integer. EF uses `EF + 0.1 - (5-q) * (0.08 + (5-q) * 0.02)`, with a minimum of 1.3.
+- Again resets repetitions to 0, sets the long-term interval to 1 day, and queues the card for another attempt at the end of the session. Every subsequent rating also updates the schedule and creates an event.
+- Due timestamps are the UTC review time plus the interval in 24-hour days. Home's daily counts use the device's local calendar day.
+- Pause/back preserves the session. Completed ratings and queues survive an app restart. Failed writes do not advance the card; retry reuses the same event ID.
+- Review history is retained if a card is deleted. Deleted/suspended cards are skipped when resuming. One unfinished session is allowed at a time.
+- Review uses no network calls. Web shows an unsupported-platform message because local card storage and OCR are currently Android-focused.
 
 ## AI backend setup
 
