@@ -1,6 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../deck_management/data/local_deck_repository.dart';
+import '../../deck_management/domain/deck_repository.dart';
+import '../../deck_management/presentation/deck_detail_screen.dart';
+import '../../deck_management/presentation/library_decks_screen.dart';
 import '../../../shared/theme/memo_theme.dart';
 import '../domain/home_dashboard_data.dart';
 import 'home_formatters.dart';
@@ -41,10 +45,16 @@ class HomeActions {
 }
 
 class HomeScreen extends StatefulWidget {
-  const HomeScreen({super.key, required this.data, required this.actions});
+  const HomeScreen({
+    super.key,
+    required this.data,
+    required this.actions,
+    this.libraryRepository,
+  });
 
   final HomeDashboardData data;
   final HomeActions actions;
+  final DeckRepository? libraryRepository;
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -52,6 +62,8 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   int selectedTab = 0;
+  late final DeckRepository _libraryRepository =
+      widget.libraryRepository ?? LocalDeckRepository();
 
   Future<void> _showCreateSheet() async {
     final source = await showModalBottomSheet<ImportSource>(
@@ -79,19 +91,33 @@ class _HomeScreenState extends State<HomeScreen> {
                 actions: widget.actions,
                 onCreate: _showCreateSheet,
               )
+            : selectedTab == 1
+            ? LibraryDecksScreen(
+                repository: _libraryRepository,
+                onOpenDeck: (deckId) => Navigator.of(context).push<void>(
+                  MaterialPageRoute<void>(
+                    builder: (_) => DeckDetailScreen(
+                      deckId: deckId,
+                      repository: _libraryRepository,
+                    ),
+                  ),
+                ),
+              )
             : _TabPlaceholder(index: selectedTab),
       ),
-      floatingActionButton: FloatingActionButton.extended(
-        key: const Key('create-material-fab'),
-        onPressed: _showCreateSheet,
-        backgroundColor: p.primary,
-        foregroundColor: Theme.of(context).colorScheme.onPrimary,
-        elevation: 3,
-        icon: const Icon(Icons.add_rounded),
-        label: const Text('Tạo học liệu'),
-        tooltip: 'Tạo học liệu mới',
-        shape: const StadiumBorder(),
-      ),
+      floatingActionButton: selectedTab == 0
+          ? FloatingActionButton.extended(
+              key: const Key('create-material-fab'),
+              onPressed: _showCreateSheet,
+              backgroundColor: p.primary,
+              foregroundColor: Theme.of(context).colorScheme.onPrimary,
+              elevation: 3,
+              icon: const Icon(Icons.add_rounded),
+              label: const Text('Tạo học liệu'),
+              tooltip: 'Tạo học liệu mới',
+              shape: const StadiumBorder(),
+            )
+          : null,
       floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
       bottomNavigationBar: _BottomNavigation(
         selectedTab: selectedTab,
