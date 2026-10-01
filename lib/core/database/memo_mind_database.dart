@@ -16,15 +16,16 @@ class MemoMindDatabase {
     final root = await getDatabasesPath();
     return openDatabase(
       p.join(root, 'memo_mind.db'),
-      version: 6,
+      version: 7,
       onConfigure: (db) async => db.execute('PRAGMA foreign_keys = ON'),
-      onCreate: (db, version) => createV6(db),
+      onCreate: (db, version) => createV7(db),
       onUpgrade: (db, oldVersion, newVersion) async {
         if (oldVersion < 2) await migrateV1ToV2(db);
         if (oldVersion < 3) await migrateV2ToV3(db);
         if (oldVersion < 4) await migrateV3ToV4(db);
         if (oldVersion < 5) await migrateV4ToV5(db);
         if (oldVersion < 6) await migrateV5ToV6(db);
+        if (oldVersion < 7) await migrateV6ToV7(db);
       },
     );
   }
@@ -493,6 +494,21 @@ class MemoMindDatabase {
       'CREATE INDEX idx_cards_source_block_id ON cards(source_block_id)',
     );
     await db.execute('CREATE INDEX idx_cards_due_date ON cards(due_date)');
+  }
+
+  static Future<void> createV7(DatabaseExecutor db) async {
+    await createV6(db);
+    await migrateV6ToV7(db);
+  }
+
+  static Future<void> migrateV6ToV7(DatabaseExecutor db) async {
+    await db.execute(
+      "ALTER TABLE decks ADD COLUMN tags TEXT NOT NULL DEFAULT '[]'",
+    );
+    await db.execute(
+      "ALTER TABLE decks ADD COLUMN status TEXT NOT NULL DEFAULT 'active'"
+      " CHECK(status IN ('active','deleted'))",
+    );
   }
 
   Future<void> close() async {

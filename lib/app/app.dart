@@ -8,6 +8,10 @@ import '../features/document_import/data/local_document_import_repository.dart';
 import '../features/document_import/domain/document_import_models.dart';
 import '../features/document_import/presentation/document_import_flow.dart';
 import '../features/document_import/presentation/pdf_import_flow.dart';
+import '../features/deck_management/data/local_deck_repository.dart';
+import '../features/deck_management/domain/deck_repository.dart';
+import '../features/deck_management/presentation/deck_detail_screen.dart';
+import '../features/deck_management/presentation/library_decks_screen.dart';
 import '../shared/theme/memo_theme.dart';
 
 class MemoMindApp extends StatefulWidget {
@@ -19,12 +23,14 @@ class MemoMindApp extends StatefulWidget {
 
 class _MemoMindAppState extends State<MemoMindApp> {
   late final LocalDocumentImportRepository _importRepository;
+  late final DeckRepository _deckRepository;
   late final Future<void> _recovery;
 
   @override
   void initState() {
     super.initState();
     _importRepository = LocalDocumentImportRepository();
+    _deckRepository = LocalDeckRepository();
     _recovery = _importRepository.recoverInterruptedImports();
   }
 
@@ -73,6 +79,28 @@ class _MemoMindAppState extends State<MemoMindApp> {
           );
         }
 
+        void openDeck(String deckId) {
+          Navigator.of(context).push<void>(
+            MaterialPageRoute<void>(
+              builder: (_) => DeckDetailScreen(
+                deckId: deckId,
+                repository: _deckRepository,
+              ),
+            ),
+          );
+        }
+
+        void openLibrary() {
+          Navigator.of(context).push<void>(
+            MaterialPageRoute<void>(
+              builder: (_) => LibraryDecksScreen(
+                repository: _deckRepository,
+                onOpenDeck: openDeck,
+              ),
+            ),
+          );
+        }
+
         return FutureBuilder<void>(
           future: _recovery,
           builder: (context, snapshot) {
@@ -83,15 +111,16 @@ class _MemoMindAppState extends State<MemoMindApp> {
             }
             return HomeScreen(
               data: demoHomeDashboard(),
+              libraryRepository: _deckRepository,
               actions: HomeActions(
                 onStartReview: () => openPlaceholder('Phiên ôn tập'),
                 onFreeReview: () => openPlaceholder('Ôn tự do'),
                 onOpenDueDecks: () => openPlaceholder('Bộ thẻ đến hạn'),
-                onOpenDeck: (_) => openPlaceholder('Chi tiết bộ thẻ'),
+                onOpenDeck: openDeck,
                 onStartDeckReview: (_) => openPlaceholder('Phiên ôn bộ thẻ'),
                 onOpenDocument: (_) => openPlaceholder('Chi tiết tài liệu'),
                 onOpenStatistics: () => openPlaceholder('Thống kê'),
-                onOpenLibrary: () => openPlaceholder('Thư viện'),
+                onOpenLibrary: openLibrary,
                 onOpenProfile: () => openPlaceholder('Cá nhân'),
                 onOpenApprovals: () => openPlaceholder('Duyệt thẻ AI'),
                 onOpenJob: (_) => openPlaceholder('Tác vụ học liệu'),
