@@ -22,7 +22,30 @@ class LocalDeckRepository implements DeckRepository {
     required String title,
     String? description,
     DeckTone tone = DeckTone.indigo,
+    List<String> tags = const [],
   }) =>
+      Future.error(UnsupportedError('Deck storage unsupported on web.'));
+
+  @override
+  Future<Deck> updateDeck(
+    String deckId, {
+    required String title,
+    String? description,
+    DeckTone? tone,
+    List<String>? tags,
+  }) =>
+      Future.error(UnsupportedError('Deck storage unsupported on web.'));
+
+  @override
+  Future<void> deleteDeck(String deckId) =>
+      Future.error(UnsupportedError('Deck storage unsupported on web.'));
+
+  @override
+  Future<void> deleteCard(String cardId) =>
+      Future.error(UnsupportedError('Deck storage unsupported on web.'));
+
+  @override
+  Future<CardSourceTrace> getCardSourceTrace(CardEntity card) =>
       Future.error(UnsupportedError('Deck storage unsupported on web.'));
 
   @override

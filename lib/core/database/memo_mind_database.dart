@@ -543,6 +543,11 @@ class MemoMindDatabase {
     // Only one unfinished session; restarting the app resumes the same queue.
     await db.execute(
       "CREATE UNIQUE INDEX idx_review_active_session ON review_sessions(status) WHERE status = 'active'",
+      "ALTER TABLE decks ADD COLUMN tags TEXT NOT NULL DEFAULT '[]'",
+    );
+    await db.execute(
+      "ALTER TABLE decks ADD COLUMN status TEXT NOT NULL DEFAULT 'active'"
+      " CHECK(status IN ('active','deleted'))",
     );
   }
 

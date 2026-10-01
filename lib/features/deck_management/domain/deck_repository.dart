@@ -8,10 +8,22 @@ abstract class DeckRepository {
     required String title,
     String? description,
     DeckTone tone = DeckTone.indigo,
+    List<String> tags = const [],
   });
+  Future<Deck> updateDeck(
+    String deckId, {
+    required String title,
+    String? description,
+    DeckTone? tone,
+    List<String>? tags,
+  });
+  Future<void> deleteDeck(String deckId);
+  Future<void> deleteCard(String cardId);
+  Future<CardSourceTrace> getCardSourceTrace(CardEntity card);
   Future<void> saveCardsToDeck({
     required String deckId,
     required List<CardEntity> cards,
   });
   Future<List<CardEntity>> getCardsForDeck(String deckId);
 }
+

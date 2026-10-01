@@ -1,8 +1,14 @@
+import 'dart:io';
+
+import '../../document_import/domain/document_import_models.dart';
+import '../../ocr_editor/domain/ocr_models.dart';
 import '../../material_generation/domain/material_generation_models.dart';
 
 import 'package:flutter/foundation.dart';
 
 import '../../home/domain/home_dashboard_data.dart';
+
+enum DeckStatus { active, deleted }
 
 @immutable
 class Deck {
@@ -12,6 +18,8 @@ class Deck {
     this.description,
     this.tone = DeckTone.indigo,
     this.cardCount = 0,
+    this.tags = const [],
+    this.status = DeckStatus.active,
     required this.createdAt,
     required this.updatedAt,
   });
@@ -21,6 +29,8 @@ class Deck {
   final String? description;
   final DeckTone tone;
   final int cardCount;
+  final List<String> tags;
+  final DeckStatus status;
   final DateTime createdAt;
   final DateTime updatedAt;
 
@@ -30,6 +40,8 @@ class Deck {
     String? description,
     DeckTone? tone,
     int? cardCount,
+    List<String>? tags,
+    DeckStatus? status,
     DateTime? createdAt,
     DateTime? updatedAt,
   }) {
@@ -39,6 +51,8 @@ class Deck {
       description: description ?? this.description,
       tone: tone ?? this.tone,
       cardCount: cardCount ?? this.cardCount,
+      tags: tags ?? this.tags,
+      status: status ?? this.status,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
     );
@@ -53,10 +67,20 @@ class Deck {
           title == other.title &&
           description == other.description &&
           tone == other.tone &&
-          cardCount == other.cardCount;
+          cardCount == other.cardCount &&
+          listEquals(tags, other.tags) &&
+          status == other.status;
 
   @override
-  int get hashCode => Object.hash(id, title, description, tone, cardCount);
+  int get hashCode => Object.hash(
+        id,
+        title,
+        description,
+        tone,
+        cardCount,
+        Object.hashAll(tags),
+        status,
+      );
 }
 
 enum CardStatus { active, suspended, deleted }
@@ -140,3 +164,25 @@ class CardEntity {
     status: DraftCardStatus.accepted,
   );
 }
+
+@immutable
+class CardSourceTrace {
+  const CardSourceTrace({
+    required this.documentTitle,
+    required this.sourceQuote,
+    this.sourcePage,
+    this.sourceBlock,
+    this.imageFile,
+  });
+
+  final String documentTitle;
+  final String sourceQuote;
+  final SourcePage? sourcePage;
+  final SourceBlock? sourceBlock;
+  final File? imageFile;
+
+  SourcePage? get page => sourcePage;
+  SourceBlock? get block => sourceBlock;
+  File? get sourcePageFile => imageFile;
+}
+
