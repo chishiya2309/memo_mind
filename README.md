@@ -42,6 +42,12 @@ On Android, create BASIC/CLOZE/MCQ cards directly in a deck or save accepted car
 - Review history is retained if a card is deleted. Deleted/suspended cards are skipped when resuming. One unfinished session is allowed at a time.
 - Review uses no network calls. Web shows an unsupported-platform message because local card storage and OCR are currently Android-focused.
 
+## Due-card reminders (FR16)
+
+On Android, open **Cá nhân → Cài đặt → Nhắc học** to enable reminders and select one local daily time. Reminders default to off and work offline. MemoMind schedules one notification per eligible day within today and the next six calendar days; the window refreshes on startup/resume and committed card/review changes. Notification taps open a freshly queried due-card list. Permission/channel blocking and scheduling errors are shown separately from the saved switch. Android may delay delivery; reopening the app repairs future reminders after clock/timezone changes or force-stop.
+
+See [FR16 validation and device checks](docs/fr16-validation.md) for AC01–AC09 coverage, native integration commands, and the boot receiver compatibility contract.
+
 ## Deck management and sources (UC10)
 
 Open **Thư viện** to create, rename, tag, search, or delete a deck. In the deck, add a BASIC, CLOZE, or MCQ card, edit its content/tags, search by content/tags, or review it immediately. Editing an existing card preserves its type, source, schedule, and history. Manual cards have no required source and are immediately due with EF 2.5, repetitions 0, and interval 0.

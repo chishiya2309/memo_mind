@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:path/path.dart' as p;
 import 'package:sqflite/sqflite.dart';
 
@@ -9,6 +11,12 @@ class MemoMindDatabase {
   static final MemoMindDatabase instance = MemoMindDatabase._();
 
   Database? _database;
+
+  final _studyChanges = StreamController<void>.broadcast();
+  Stream<void> get studyChanges => _studyChanges.stream;
+
+  // Publish only after a successful commit. Async listeners cannot fail the write.
+  void notifyStudyChanged() => _studyChanges.add(null);
 
   Future<Database> get database async => _database ??= await _open();
 

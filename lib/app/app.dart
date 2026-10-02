@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
@@ -17,6 +19,14 @@ import '../features/deck_management/presentation/deck_detail_screen.dart';
 import '../features/deck_management/presentation/library_decks_screen.dart';
 import '../features/deck_management/presentation/widgets/deck_form_dialog.dart';
 import '../shared/theme/memo_theme.dart';
+import '../core/database/memo_mind_database.dart';
+import '../features/review/data/local_due_cards_source.dart';
+import '../features/review/presentation/due_cards_screen.dart';
+import '../features/reminders/application/reminder_coordinator.dart';
+import '../features/reminders/application/reminder_tap_router.dart';
+import '../features/reminders/data/android_notification_gateway.dart';
+import '../features/reminders/data/local_reminder_settings_repository.dart';
+import '../features/reminders/presentation/profile_settings_screen.dart';
 
 class MemoMindApp extends StatefulWidget {
   const MemoMindApp({super.key});
@@ -25,7 +35,13 @@ class MemoMindApp extends StatefulWidget {
   State<MemoMindApp> createState() => _MemoMindAppState();
 }
 
-class _MemoMindAppState extends State<MemoMindApp> {
+class _MemoMindAppState extends State<MemoMindApp> with WidgetsBindingObserver {
+  final _navigator = GlobalKey<NavigatorState>();
+  final _dueScreen = GlobalKey<DueCardsScreenState>();
+  final _navigatorReady = Completer<void>();
+  late final ReminderCoordinator _reminders;
+  late final ReminderTapRouter _tapRouter;
+  StreamSubscription<void>? _studyChanges;
   late final LocalDocumentImportRepository _importRepository;
   late final DeckRepository _deckRepository;
   late final Future<void> _recovery;
@@ -39,6 +55,112 @@ class _MemoMindAppState extends State<MemoMindApp> {
     _deckRepository = LocalDeckRepository();
     _recovery = _importRepository.recoverInterruptedImports();
     _dashboard = _loadDashboard();
+    WidgetsBinding.instance.addObserver(this);
+    _reminders = ReminderCoordinator(
+      repository: LocalReminderSettingsRepository(),
+      gateway: AndroidNotificationGateway(),
+      dueCards: LocalDueCardsSource(),
+      timeZone: AndroidNotificationGateway.deviceTimeZone,
+    );
+    _tapRouter = ReminderTapRouter(
+      ready: () async {
+        await _recovery;
+        await MemoMindDatabase.instance.database;
+        await _navigatorReady.future;
+      },
+      open: _openDueCards,
+      refresh: () {
+        _navigator.currentState?.popUntil(
+          (route) => route.settings.name == 'review_due' || route.isFirst,
+        );
+        _dueScreen.currentState?.reload();
+      },
+      onError: (_) {
+        final context = _navigator.currentContext;
+        if (context != null && context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Không thể tải dữ liệu cục bộ. Vui lòng thử lại.'),
+            ),
+          );
+        }
+      },
+    );
+    if (_reminders.gateway.supported) {
+      _studyChanges = MemoMindDatabase.instance.studyChanges.listen(
+        (_) => _reminders.reconcile(),
+      );
+      _initializeReminders();
+    } else {
+      _reminders.reconcile();
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!_navigatorReady.isCompleted) _navigatorReady.complete();
+    });
+  }
+
+  Future<void> _initializeReminders() async {
+    try {
+      final launched = await _reminders.gateway.initialize(
+        () => _tapRouter.handle(),
+      );
+      if (launched && mounted) _tapRouter.handle();
+    } catch (_) {
+      /* Reconcile retries initialization and reports its status. */
+    }
+    await _reminders.reconcile(force: true);
+  }
+
+  Future<void> _openDueCards() async {
+    if (!mounted) return;
+    final navigator = _navigator.currentState!;
+    await navigator.push(
+      MaterialPageRoute<void>(
+        settings: const RouteSettings(name: 'review_due'),
+        builder: (_) => DueCardsScreen(
+          key: _dueScreen,
+          onOpenLibrary: () {
+            navigator.pop();
+            navigator.push(
+              MaterialPageRoute<void>(
+                builder: (_) => Scaffold(
+                  appBar: AppBar(title: const Text('Thư viện')),
+                  body: LibraryDecksScreen(
+                    repository: _deckRepository,
+                    onOpenDeck: (id) => navigator.push(
+                      MaterialPageRoute<void>(
+                        builder: (_) => DeckDetailScreen(
+                          deckId: id,
+                          repository: _deckRepository,
+                        ),
+                      ),
+                    ),
+                    onChanged: _refreshDashboard,
+                  ),
+                ),
+              ),
+            );
+          },
+        ),
+      ),
+    );
+    _refreshDashboard();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _initializeReminders();
+      _refreshDashboard();
+    }
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _studyChanges?.cancel();
+    _reminders.dispose();
+    super.dispose();
   }
 
   Future<HomeDashboardData> _loadDashboard() async {
@@ -70,6 +192,7 @@ class _MemoMindAppState extends State<MemoMindApp> {
 
   @override
   Widget build(BuildContext context) => MaterialApp(
+    navigatorKey: _navigator,
     title: 'MemoMind',
     debugShowCheckedModeBanner: false,
     locale: const Locale('vi'),
@@ -211,7 +334,12 @@ class _MemoMindAppState extends State<MemoMindApp> {
                 onOpenDocument: (_) => openPlaceholder('Chi tiết tài liệu'),
                 onOpenStatistics: () => openPlaceholder('Thống kê'),
                 onOpenLibrary: openLibrary,
-                onOpenProfile: () => openPlaceholder('Cá nhân'),
+                onOpenProfile: () => Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (_) =>
+                        ProfileSettingsScreen(coordinator: _reminders),
+                  ),
+                ),
                 onOpenApprovals: () => openPlaceholder('Duyệt thẻ AI'),
                 onOpenJob: (_) => openPlaceholder('Tác vụ học liệu'),
                 onRetrySync: () => showUnimplemented('Đồng bộ'),
@@ -230,6 +358,7 @@ class _MemoMindAppState extends State<MemoMindApp> {
                 },
               ),
               libraryRepository: _deckRepository,
+              profilePage: ProfileSettingsScreen(coordinator: _reminders),
               onOpenDeckAsync: openDeck,
             );
           },

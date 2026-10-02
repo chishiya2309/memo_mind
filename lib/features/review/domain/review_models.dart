@@ -20,6 +20,24 @@ class ScheduleState {
   });
   final int repetitions, intervalDays;
   final double easeFactor;
+
+  static bool hasValidStoredSchedule(Map<String, Object?> row) {
+    final repetitions = row['repetitions'];
+    final interval = row['interval_days'];
+    final ef = row['ease_factor'];
+    final due = row['due_date'];
+    return repetitions is int &&
+        repetitions >= 0 &&
+        interval is int &&
+        interval >= 0 &&
+        ef is num &&
+        ef.isFinite &&
+        ef >= 1.3 &&
+        (repetitions == 0 || interval > 0) &&
+        due is int &&
+        due.abs() <= 8640000000000000;
+  }
+
   final DateTime nextReviewAt;
 
   factory ScheduleState.fromRow(Map<String, Object?> row, DateTime now) {
