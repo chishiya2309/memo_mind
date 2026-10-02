@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:uuid/uuid.dart';
+import 'package:sqflite/sqflite.dart';
 
 import '../../../core/database/memo_mind_database.dart';
 import '../../document_import/domain/document_import_models.dart';
@@ -22,60 +23,42 @@ class LocalDeckRepository implements DeckRepository {
     MemoMindDatabase? database,
     DateTime Function()? clock,
     DirectoryProvider? supportDirectory,
-  })  : _database = database ?? MemoMindDatabase.instance,
-        _clock = clock ?? DateTime.now,
-        _supportDirectory = supportDirectory ?? getApplicationSupportDirectory;
+  }) : _database = database ?? MemoMindDatabase.instance,
+       _clock = clock ?? DateTime.now,
+       _supportDirectory = supportDirectory ?? getApplicationSupportDirectory;
 
   final MemoMindDatabase _database;
   final DateTime Function() _clock;
   final DirectoryProvider _supportDirectory;
   static const _uuid = Uuid();
 
-  Future<Set<String>> _getDeckColumns(dynamic db) async {
-    try {
-      final rows = await db.rawQuery('PRAGMA table_info(decks)');
-      return rows.map((r) => r['name'] as String).toSet();
-    } catch (_) {
-      return const {
-        'deck_id',
-        'title',
-        'description',
-        'tone',
-        'card_count',
-        'tags',
-        'status',
-        'created_at',
-        'updated_at',
-      };
+  String _title(String title) {
+    final value = title.trim();
+    if (value.isEmpty) {
+      throw const FormatException('Tên deck không được để trống.');
     }
+    return value;
   }
 
   @override
   Future<List<Deck>> getDecks() async {
     final db = await _database.database;
-    final columns = await _getDeckColumns(db);
-    final rows = await db.query(
+    return (await db.query(
       'decks',
-      where: columns.contains('status') ? "status != 'deleted'" : null,
+      where: "status='active'",
       orderBy: 'updated_at DESC',
-    );
-    return rows.map(_mapDeck).toList();
+    )).map(_mapDeck).toList();
   }
 
   @override
   Future<Deck?> getDeckById(String deckId) async {
     final db = await _database.database;
-    final columns = await _getDeckColumns(db);
     final rows = await db.query(
       'decks',
-      where: columns.contains('status')
-          ? 'deck_id = ? AND status != ?'
-          : 'deck_id = ?',
-      whereArgs: columns.contains('status') ? [deckId, 'deleted'] : [deckId],
-      limit: 1,
+      where: "deck_id=? AND status='active'",
+      whereArgs: [deckId],
     );
-    if (rows.isEmpty) return null;
-    return _mapDeck(rows.first);
+    return rows.isEmpty ? null : _mapDeck(rows.single);
   }
 
   @override
@@ -85,41 +68,31 @@ class LocalDeckRepository implements DeckRepository {
     DeckTone tone = DeckTone.indigo,
     List<String> tags = const [],
   }) async {
+    final name = _title(title);
+    final labels = CardContent.normalizeTags(tags);
     final db = await _database.database;
-    final now = _clock();
-    final deckId = _uuid.v4();
-
-    final values = <String, dynamic>{
-      'deck_id': deckId,
-      'title': title.trim(),
-      'description': description?.trim(),
-      'tone': tone.name,
-      'card_count': 0,
-      'created_at': now.millisecondsSinceEpoch,
-      'updated_at': now.millisecondsSinceEpoch,
-    };
-
-    final columns = await _getDeckColumns(db);
-    if (columns.contains('tags')) {
-      values['tags'] = jsonEncode(tags);
-    }
-    if (columns.contains('status')) {
-      values['status'] = 'active';
-    }
-
-    await db.insert('decks', values);
-
-    return Deck(
-      id: deckId,
-      title: title.trim(),
+    final now = _clock().toUtc();
+    final deck = Deck(
+      id: _uuid.v4(),
+      title: name,
       description: description?.trim(),
       tone: tone,
-      cardCount: 0,
-      tags: List.unmodifiable(tags),
-      status: DeckStatus.active,
+      tags: labels,
       createdAt: now,
       updatedAt: now,
     );
+    await db.insert('decks', {
+      'deck_id': deck.id,
+      'title': name,
+      'description': deck.description,
+      'tone': tone.name,
+      'tags': jsonEncode(labels),
+      'status': 'active',
+      'card_count': 0,
+      'created_at': now.millisecondsSinceEpoch,
+      'updated_at': now.millisecondsSinceEpoch,
+    });
+    return deck;
   }
 
   @override
@@ -130,121 +103,185 @@ class LocalDeckRepository implements DeckRepository {
     DeckTone? tone,
     List<String>? tags,
   }) async {
+    final name = _title(title);
     final db = await _database.database;
-    final now = _clock().millisecondsSinceEpoch;
-    final columns = await _getDeckColumns(db);
-
-    final existing = await db.query(
-      'decks',
-      where: columns.contains('status')
-          ? 'deck_id = ? AND status != ?'
-          : 'deck_id = ?',
-      whereArgs: columns.contains('status') ? [deckId, 'deleted'] : [deckId],
-      limit: 1,
-    );
-    if (existing.isEmpty) {
-      throw StateError('Deck không tồn tại hoặc đã bị xóa.');
-    }
-
-    final existingRow = existing.first;
-    final updatedTone = tone ??
-        DeckTone.values.firstWhere(
-          (t) => t.name == (existingRow['tone'] as String?),
-          orElse: () => DeckTone.indigo,
-        );
-
-    final values = <String, dynamic>{
-      'title': title.trim(),
-      'description': description?.trim(),
-      'tone': updatedTone.name,
-      'updated_at': now,
-    };
-
-    if (tags != null && columns.contains('tags')) {
-      values['tags'] = jsonEncode(tags);
-    }
-
-    await db.update(
-      'decks',
-      values,
-      where: 'deck_id = ?',
-      whereArgs: [deckId],
-    );
-
-    final updatedRow = await db.query(
-      'decks',
-      where: 'deck_id = ?',
-      whereArgs: [deckId],
-      limit: 1,
-    );
-    return _mapDeck(updatedRow.first);
+    return db.transaction((txn) async {
+      final rows = await txn.query(
+        'decks',
+        where: "deck_id=? AND status='active'",
+        whereArgs: [deckId],
+      );
+      if (rows.isEmpty) throw StateError('Deck không tồn tại hoặc đã bị xóa.');
+      await txn.update(
+        'decks',
+        {
+          'title': name,
+          if (description != null) 'description': description.trim(),
+          if (tone != null) 'tone': tone.name,
+          if (tags != null) 'tags': jsonEncode(CardContent.normalizeTags(tags)),
+          'updated_at': _clock().toUtc().millisecondsSinceEpoch,
+        },
+        where: 'deck_id=?',
+        whereArgs: [deckId],
+      );
+      return _mapDeck(
+        (await txn.query(
+          'decks',
+          where: 'deck_id=?',
+          whereArgs: [deckId],
+        )).single,
+      );
+    });
   }
 
   @override
   Future<void> deleteDeck(String deckId) async {
     final db = await _database.database;
-    final now = _clock().millisecondsSinceEpoch;
-    final columns = await _getDeckColumns(db);
-
-    if (columns.contains('status')) {
-      await db.update(
+    final now = _clock().toUtc().millisecondsSinceEpoch;
+    await db.transaction((txn) async {
+      await txn.update(
         'decks',
-        {
-          'status': 'deleted',
-          'updated_at': now,
-        },
-        where: 'deck_id = ?',
+        {'status': 'deleted', 'card_count': 0, 'updated_at': now},
+        where: 'deck_id=?',
         whereArgs: [deckId],
       );
-    } else {
-      await db.delete(
-        'decks',
-        where: 'deck_id = ?',
+      await txn.update(
+        'cards',
+        {'status': 'deleted', 'updated_at': now},
+        where: "deck_id=? AND status!='deleted'",
         whereArgs: [deckId],
       );
-    }
+    });
   }
+
+  Future<void> _refreshCount(DatabaseExecutor db, String deckId, int now) => db
+      .rawUpdate(
+        """UPDATE decks SET card_count=(
+      SELECT COUNT(*) FROM cards WHERE deck_id=? AND status!='deleted'
+    ), updated_at=? WHERE deck_id=?""",
+        [deckId, now, deckId],
+      )
+      .then((_) {});
 
   @override
   Future<void> deleteCard(String cardId) async {
     final db = await _database.database;
-    final now = _clock().millisecondsSinceEpoch;
-
+    final now = _clock().toUtc().millisecondsSinceEpoch;
     await db.transaction((txn) async {
       final rows = await txn.query(
         'cards',
-        columns: ['deck_id'],
-        where: 'card_id = ?',
+        where: 'card_id=?',
         whereArgs: [cardId],
-        limit: 1,
       );
       if (rows.isEmpty) return;
-
-      final deckId = rows.first['deck_id'] as String;
-
       await txn.update(
         'cards',
-        {
-          'status': 'deleted',
-          'updated_at': now,
-        },
-        where: 'card_id = ?',
+        {'status': 'deleted', 'updated_at': now},
+        where: 'card_id=?',
         whereArgs: [cardId],
       );
+      await _refreshCount(txn, rows.single['deck_id'] as String, now);
+    });
+  }
 
-      await txn.rawUpdate(
-        """
-        UPDATE decks SET card_count = (
-          SELECT COUNT(*) FROM cards WHERE deck_id = ? AND status != 'deleted'
-        ), updated_at = ? WHERE deck_id = ?
-        """,
-        [deckId, now, deckId],
+  Map<String, Object?> _contentValues(CardContent content) => {
+    'front': content.front.trim(),
+    'back': content.answer.trim(),
+    'tags': jsonEncode(CardContent.normalizeTags(content.tags)),
+    'mcq_payload': content.type == CardType.mcq
+        ? jsonEncode({
+            'options': content.options
+                .map(
+                  (o) => McqOption(
+                    optionId: o.optionId,
+                    text: o.text.trim(),
+                  ).toJson(),
+                )
+                .toList(),
+            'correctOptionId': content.correctOptionId,
+            'explanation': content.explanation?.trim(),
+          })
+        : null,
+  };
+
+  @override
+  Future<CardEntity> createManualCard({
+    required String deckId,
+    required CardContent content,
+  }) async {
+    content.validate();
+    final db = await _database.database;
+    final now = _clock().toUtc();
+    final id = _uuid.v4();
+    return db.transaction((txn) async {
+      if ((await txn.query(
+        'decks',
+        where: "deck_id=? AND status='active'",
+        whereArgs: [deckId],
+      )).isEmpty) {
+        throw StateError('Deck không tồn tại hoặc đã bị xóa.');
+      }
+      await txn.insert('cards', {
+        'card_id': id,
+        'deck_id': deckId,
+        'type': content.type.wireName,
+        ..._contentValues(content),
+        'source_quote': '',
+        'status': 'active',
+        'repetitions': 0,
+        'interval_days': 0,
+        'ease_factor': 2.5,
+        'due_date': now.millisecondsSinceEpoch,
+        'created_at': now.millisecondsSinceEpoch,
+        'updated_at': now.millisecondsSinceEpoch,
+      });
+      await _refreshCount(txn, deckId, now.millisecondsSinceEpoch);
+      return cardFromRow(
+        (await txn.query('cards', where: 'card_id=?', whereArgs: [id])).single,
+      );
+    });
+  }
+
+  @override
+  Future<CardEntity> updateCard(
+    String cardId, {
+    required CardContent content,
+  }) async {
+    content.validate();
+    final db = await _database.database;
+    return db.transaction((txn) async {
+      final rows = await txn.rawQuery(
+        """SELECT c.* FROM cards c JOIN decks d ON d.deck_id=c.deck_id
+        WHERE c.card_id=? AND c.status!='deleted' AND d.status='active'""",
+        [cardId],
+      );
+      if (rows.isEmpty) throw StateError('Thẻ không tồn tại hoặc đã bị xóa.');
+      if (rows.single['type'] != content.type.wireName) {
+        throw const FormatException('Không thể đổi loại thẻ đã lưu.');
+      }
+      final now = _clock().toUtc().millisecondsSinceEpoch;
+      await txn.update(
+        'cards',
+        {..._contentValues(content), 'updated_at': now},
+        where: 'card_id=?',
+        whereArgs: [cardId],
+      );
+      await _refreshCount(txn, rows.single['deck_id'] as String, now);
+      return cardFromRow(
+        (await txn.query(
+          'cards',
+          where: 'card_id=?',
+          whereArgs: [cardId],
+        )).single,
       );
     });
   }
 
   @override
   Future<CardSourceTrace> getCardSourceTrace(CardEntity card) async {
+    if (!card.hasSource) {
+      return CardSourceTrace(documentTitle: '', sourceQuote: '');
+    }
     final db = await _database.database;
 
     String documentTitle = '';
@@ -278,7 +315,12 @@ class LocalDeckRepository implements DeckRepository {
       final support = await _supportDirectory();
       supportPath = support.path;
     } catch (_) {
-      supportPath = Directory.current.path;
+      return CardSourceTrace(
+        documentTitle: documentTitle,
+        sourceQuote: card.sourceQuote,
+        sourcePageNumber: card.sourcePageNumber,
+        warning: 'Không thể đọc ảnh nguồn trên thiết bị.',
+      );
     }
 
     final pageRows = await db.rawQuery(
@@ -331,9 +373,13 @@ class LocalDeckRepository implements DeckRepository {
       sourcePage: sourcePage,
       sourceBlock: sourceBlock,
       imageFile: imageFile,
+      sourcePageNumber: card.sourcePageNumber,
+      imageUsesNormalizedCoordinates:
+          imageFile != null &&
+          (sourcePage?.normalizedAsset == null ||
+              imageFile.path == sourcePage?.normalizedAsset?.absolutePath),
     );
   }
-
 
   @override
   Future<void> saveCardsToDeck({
@@ -343,18 +389,13 @@ class LocalDeckRepository implements DeckRepository {
     if (cards.isEmpty) return;
     final db = await _database.database;
     final now = _clock().millisecondsSinceEpoch;
-    final deckColumns = await _getDeckColumns(db);
 
     await db.transaction((txn) async {
       final decks = await txn.query(
         'decks',
         columns: ['deck_id'],
-        where: deckColumns.contains('status')
-            ? 'deck_id = ? AND status != ?'
-            : 'deck_id = ?',
-        whereArgs: deckColumns.contains('status')
-            ? [deckId, 'deleted']
-            : [deckId],
+        where: "deck_id = ? AND status='active'",
+        whereArgs: [deckId],
       );
       if (decks.isEmpty) {
         throw const MaterialGenerationFailure(
@@ -413,9 +454,10 @@ class LocalDeckRepository implements DeckRepository {
         MaterialValidator.validate(
           card.toDraft(),
           sourceBlock: block,
-          documentId: card.sourceDocumentId,
+          documentId: card.sourceDocumentId ?? '',
         );
         await txn.insert('cards', {
+          'tags': jsonEncode(CardContent.normalizeTags(card.tags)),
           'card_id': card.id,
           'deck_id': deckId,
           'type': card.type.wireName,
@@ -457,11 +499,9 @@ class LocalDeckRepository implements DeckRepository {
   @override
   Future<List<CardEntity>> getCardsForDeck(String deckId) async {
     final db = await _database.database;
-    final rows = await db.query(
-      'cards',
-      where: 'deck_id = ? AND status != ?',
-      whereArgs: [deckId, 'deleted'],
-      orderBy: 'created_at ASC',
+    final rows = await db.rawQuery(
+      "SELECT c.* FROM cards c JOIN decks d ON d.deck_id=c.deck_id WHERE c.deck_id=? AND c.status!='deleted' AND d.status='active' ORDER BY c.created_at",
+      [deckId],
     );
     return rows.map(cardFromRow).toList();
   }
@@ -481,8 +521,9 @@ class LocalDeckRepository implements DeckRepository {
     }
 
     final statusRaw = row['status'] as String?;
-    final status =
-        statusRaw == 'deleted' ? DeckStatus.deleted : DeckStatus.active;
+    final status = statusRaw == 'deleted'
+        ? DeckStatus.deleted
+        : DeckStatus.active;
 
     return Deck(
       id: row['deck_id'] as String,
@@ -499,8 +540,6 @@ class LocalDeckRepository implements DeckRepository {
       updatedAt: DateTime.fromMillisecondsSinceEpoch(row['updated_at'] as int),
     );
   }
-
-  static CardEntity cardFromRow(Map<String, dynamic> row) {
 
   SourceBlock _mapSourceBlockRow(Map<String, dynamic> row) {
     final left = row['box_left'] as num?;
@@ -621,8 +660,7 @@ class LocalDeckRepository implements DeckRepository {
   File _resolveRelative(String root, String relativePath) =>
       File(p.joinAll([root, ...relativePath.split('/')]));
 
-
-  CardEntity _mapCard(Map<String, dynamic> row) {
+  static CardEntity cardFromRow(Map<String, dynamic> row) {
     final payload = row['mcq_payload'] == null
         ? null
         : jsonDecode(row['mcq_payload'] as String) as Map<String, dynamic>;
@@ -639,11 +677,14 @@ class LocalDeckRepository implements DeckRepository {
       ),
       correctOptionId: payload?['correctOptionId'] as String?,
       explanation: payload?['explanation'] as String?,
-      sourceDocumentId: row['source_document_id'] as String,
-      sourcePageId: row['source_page_id'] as String,
-      sourcePageNumber: row['source_page_number'] as int,
-      sourceBlockId: row['source_block_id'] as String,
+      sourceDocumentId: row['source_document_id'] as String?,
+      sourcePageId: row['source_page_id'] as String?,
+      sourcePageNumber: row['source_page_number'] as int?,
+      sourceBlockId: row['source_block_id'] as String?,
       sourceQuote: row['source_quote'] as String,
+      tags: List<String>.unmodifiable(
+        (jsonDecode(row['tags'] as String? ?? '[]') as List).cast<String>(),
+      ),
       confidence: (row['confidence'] as num?)?.toDouble(),
       status: CardStatus.values.byName(row['status'] as String),
       repetitions: (row['repetitions'] as int?) ?? 0,

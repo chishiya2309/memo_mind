@@ -15,6 +15,7 @@ import '../features/deck_management/data/local_deck_repository.dart';
 import '../features/deck_management/domain/deck_repository.dart';
 import '../features/deck_management/presentation/deck_detail_screen.dart';
 import '../features/deck_management/presentation/library_decks_screen.dart';
+import '../features/deck_management/presentation/widgets/deck_form_dialog.dart';
 import '../shared/theme/memo_theme.dart';
 
 class MemoMindApp extends StatefulWidget {
@@ -133,42 +134,59 @@ class _MemoMindAppState extends State<MemoMindApp> {
           _refreshDashboard();
         }
 
+        Future<void> openDeck(String deckId) async {
+          await Navigator.of(context).push<void>(
+            MaterialPageRoute<void>(
+              builder: (_) =>
+                  DeckDetailScreen(deckId: deckId, repository: _deckRepository),
+            ),
+          );
+          _refreshDashboard();
+        }
+
+        Future<void> openLibrary() async {
+          await Navigator.of(context).push<void>(
+            MaterialPageRoute<void>(
+              builder: (_) => Scaffold(
+                appBar: AppBar(title: const Text('Thư viện')),
+                body: LibraryDecksScreen(
+                  repository: _deckRepository,
+                  onOpenDeck: openDeck,
+                  onOpenDeckAsync: openDeck,
+                  onChanged: _refreshDashboard,
+                ),
+              ),
+            ),
+          );
+          _refreshDashboard();
+        }
+
+        Future<void> createManualDeck() async {
+          String? deckId;
+          final form = await DeckFormDialog.show(
+            context,
+            onSave: (data) async {
+              final deck = await _deckRepository.createDeck(
+                title: data.title,
+                tags: data.tags,
+              );
+              deckId = deck.id;
+            },
+          );
+          if (form == null || !context.mounted || deckId == null) return;
+          await openDeck(deckId!);
+        }
 
         return FutureBuilder<HomeDashboardData>(
           future: _dashboard,
-
-        void openDeck(String deckId) {
-          Navigator.of(context).push<void>(
-            MaterialPageRoute<void>(
-              builder: (_) => DeckDetailScreen(
-                deckId: deckId,
-                repository: _deckRepository,
-              ),
-            ),
-          );
-        }
-
-        void openLibrary() {
-          Navigator.of(context).push<void>(
-            MaterialPageRoute<void>(
-              builder: (_) => LibraryDecksScreen(
-                repository: _deckRepository,
-                onOpenDeck: openDeck,
-              ),
-            ),
-          );
-        }
-
-        return FutureBuilder<void>(
-          future: _recovery,
           builder: (context, snapshot) {
-            if (snapshot.connectionState != ConnectionState.done) {
+            if (snapshot.connectionState != ConnectionState.done &&
+                !snapshot.hasData) {
               return const Scaffold(
                 body: Center(child: CircularProgressIndicator()),
               );
             }
             return HomeScreen(
-
               data:
                   snapshot.data ??
                   HomeDashboardData(
@@ -188,17 +206,8 @@ class _MemoMindAppState extends State<MemoMindApp> {
                 onStartReview: () => openReview(),
                 onFreeReview: () => selectReviewDeck(),
                 onOpenDueDecks: () => selectReviewDeck(dueOnly: true),
-                onOpenDeck: (id) => openReview(deckId: id),
-                onStartDeckReview: (id) => openReview(deckId: id),
-
-              data: demoHomeDashboard(),
-              libraryRepository: _deckRepository,
-              actions: HomeActions(
-                onStartReview: () => openPlaceholder('Phiên ôn tập'),
-                onFreeReview: () => openPlaceholder('Ôn tự do'),
-                onOpenDueDecks: () => openPlaceholder('Bộ thẻ đến hạn'),
                 onOpenDeck: openDeck,
-                onStartDeckReview: (_) => openPlaceholder('Phiên ôn bộ thẻ'),
+                onStartDeckReview: (id) => openReview(deckId: id),
                 onOpenDocument: (_) => openPlaceholder('Chi tiết tài liệu'),
                 onOpenStatistics: () => openPlaceholder('Thống kê'),
                 onOpenLibrary: openLibrary,
@@ -216,10 +225,12 @@ class _MemoMindAppState extends State<MemoMindApp> {
                     case ImportSource.pdf:
                       return startPdfImport();
                     case ImportSource.manualDeck:
-                      return showUnimplemented('Tạo deck thủ công');
+                      return createManualDeck();
                   }
                 },
               ),
+              libraryRepository: _deckRepository,
+              onOpenDeckAsync: openDeck,
             );
           },
         );

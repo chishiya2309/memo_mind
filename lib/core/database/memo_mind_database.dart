@@ -16,9 +16,9 @@ class MemoMindDatabase {
     final root = await getDatabasesPath();
     return openDatabase(
       p.join(root, 'memo_mind.db'),
-      version: 7,
+      version: 8,
       onConfigure: (db) async => db.execute('PRAGMA foreign_keys = ON'),
-      onCreate: (db, version) => createV7(db),
+      onCreate: (db, version) => createV8(db),
       onUpgrade: (db, oldVersion, newVersion) async {
         if (oldVersion < 2) await migrateV1ToV2(db);
         if (oldVersion < 3) await migrateV2ToV3(db);
@@ -26,6 +26,7 @@ class MemoMindDatabase {
         if (oldVersion < 5) await migrateV4ToV5(db);
         if (oldVersion < 6) await migrateV5ToV6(db);
         if (oldVersion < 7) await migrateV6ToV7(db);
+        if (oldVersion < 8) await migrateV7ToV8(db);
       },
     );
   }
@@ -543,12 +544,81 @@ class MemoMindDatabase {
     // Only one unfinished session; restarting the app resumes the same queue.
     await db.execute(
       "CREATE UNIQUE INDEX idx_review_active_session ON review_sessions(status) WHERE status = 'active'",
+    );
+    await db.execute(
       "ALTER TABLE decks ADD COLUMN tags TEXT NOT NULL DEFAULT '[]'",
     );
     await db.execute(
       "ALTER TABLE decks ADD COLUMN status TEXT NOT NULL DEFAULT 'active'"
       " CHECK(status IN ('active','deleted'))",
     );
+  }
+
+  static Future<void> createV8(DatabaseExecutor db) async {
+    await createV7(db);
+    await migrateV7ToV8(db);
+  }
+
+  static Future<void> migrateV7ToV8(DatabaseExecutor db) async {
+    final columns = (await db.rawQuery('PRAGMA table_info(decks)'))
+        .map((r) => r['name'])
+        .toSet();
+    if (!columns.contains('tags')) {
+      await db.execute(
+        "ALTER TABLE decks ADD COLUMN tags TEXT NOT NULL DEFAULT '[]'",
+      );
+    }
+    if (!columns.contains('status')) {
+      await db.execute(
+        "ALTER TABLE decks ADD COLUMN status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','deleted'))",
+      );
+    }
+    // Source IDs are historical references. Losing a source must not delete a card.
+    // No tables reference cards: review_events deliberately retains historical IDs.
+    await db.execute('ALTER TABLE cards RENAME TO cards_v7');
+    await db.execute('''
+      CREATE TABLE cards (
+        card_id TEXT PRIMARY KEY, deck_id TEXT NOT NULL,
+        type TEXT NOT NULL CHECK(type IN ('BASIC','CLOZE','MCQ')),
+        front TEXT NOT NULL, back TEXT NOT NULL, mcq_payload TEXT,
+        tags TEXT NOT NULL DEFAULT '[]',
+        source_document_id TEXT, source_page_id TEXT,
+        source_page_number INTEGER CHECK(source_page_number IS NULL OR source_page_number > 0),
+        source_block_id TEXT, source_quote TEXT NOT NULL DEFAULT '',
+        confidence REAL CHECK(confidence IS NULL OR confidence BETWEEN 0 AND 1),
+        status TEXT NOT NULL CHECK(status IN ('active','suspended','deleted')),
+        repetitions INTEGER NOT NULL DEFAULT 0 CHECK(repetitions >= 0),
+        interval_days INTEGER NOT NULL DEFAULT 0 CHECK(interval_days >= 0),
+        ease_factor REAL NOT NULL DEFAULT 2.5 CHECK(ease_factor >= 1.3),
+        due_date INTEGER NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+        CHECK(type = 'MCQ' OR mcq_payload IS NULL),
+        CHECK(type != 'MCQ' OR status != 'active' OR mcq_payload IS NOT NULL),
+        FOREIGN KEY(deck_id) REFERENCES decks(deck_id) ON DELETE CASCADE
+      )
+    ''');
+    const fields =
+        'card_id,deck_id,type,front,back,mcq_payload,source_document_id,source_page_id,source_page_number,source_block_id,source_quote,confidence,status,repetitions,interval_days,ease_factor,due_date,created_at,updated_at';
+    await db.execute(
+      'INSERT INTO cards ($fields) SELECT $fields FROM cards_v7',
+    );
+    await db.execute('DROP TABLE cards_v7');
+    await db.execute('CREATE INDEX idx_cards_deck_id ON cards(deck_id)');
+    await db.execute(
+      'CREATE INDEX idx_cards_source_block_id ON cards(source_block_id)',
+    );
+    await db.execute('CREATE INDEX idx_cards_due_date ON cards(due_date)');
+    await db.execute(
+      'CREATE INDEX idx_cards_active_due ON cards(status,due_date)',
+    );
+    await db.execute(
+      "UPDATE cards SET status='deleted' WHERE deck_id IN (SELECT deck_id FROM decks WHERE status='deleted')",
+    );
+    await db.execute(
+      "UPDATE decks SET card_count=(SELECT COUNT(*) FROM cards WHERE cards.deck_id=decks.deck_id AND cards.status!='deleted')",
+    );
+    if ((await db.rawQuery('PRAGMA foreign_key_check')).isNotEmpty) {
+      throw StateError('Migration left invalid foreign keys.');
+    }
   }
 
   Future<void> close() async {

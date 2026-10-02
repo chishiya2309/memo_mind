@@ -14,13 +14,17 @@ class SourceInspectionModal extends StatelessWidget {
     required this.sourceBlock,
     required this.sourceQuote,
     this.sourcePageFile,
+    this.sourcePageNumber,
+    this.imageUsesNormalizedCoordinates = true,
+    this.warning,
   });
-
-  final String documentTitle;
+  final String documentTitle, sourceQuote;
   final SourcePage? sourcePage;
   final SourceBlock? sourceBlock;
-  final String sourceQuote;
   final File? sourcePageFile;
+  final int? sourcePageNumber;
+  final bool imageUsesNormalizedCoordinates;
+  final String? warning;
 
   static Future<void> show(
     BuildContext context, {
@@ -29,154 +33,109 @@ class SourceInspectionModal extends StatelessWidget {
     required SourceBlock? sourceBlock,
     required String sourceQuote,
     File? sourcePageFile,
-  }) {
-    return showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (ctx) => SourceInspectionModal(
-        documentTitle: documentTitle,
-        sourcePage: sourcePage,
-        sourceBlock: sourceBlock,
-        sourceQuote: sourceQuote,
-        sourcePageFile: sourcePageFile,
-      ),
-    );
+    int? sourcePageNumber,
+    bool imageUsesNormalizedCoordinates = true,
+    String? warning,
+  }) => showModalBottomSheet<void>(
+    context: context,
+    isScrollControlled: true,
+    useSafeArea: true,
+    builder: (_) => SourceInspectionModal(
+      documentTitle: documentTitle,
+      sourcePage: sourcePage,
+      sourceBlock: sourceBlock,
+      sourceQuote: sourceQuote,
+      sourcePageFile: sourcePageFile,
+      sourcePageNumber: sourcePageNumber,
+      imageUsesNormalizedCoordinates: imageUsesNormalizedCoordinates,
+      warning: warning,
+    ),
+  );
+
+  bool get _validBox {
+    final b = sourceBlock?.boundingBox;
+    return imageUsesNormalizedCoordinates &&
+        sourceBlock != null &&
+        sourcePage != null &&
+        sourceBlock!.pageId == sourcePage!.pageId &&
+        sourceBlock!.documentId == sourcePage!.documentId &&
+        sourceBlock!.pageNumber == sourcePage!.pageNumber &&
+        !sourceBlock!.isDeleted &&
+        sourceBlock!.hasValidBox &&
+        b != null &&
+        b.left.isFinite &&
+        b.top.isFinite &&
+        b.width.isFinite &&
+        b.height.isFinite &&
+        b.left >= 0 &&
+        b.top >= 0 &&
+        b.width > 0 &&
+        b.height > 0 &&
+        b.left + b.width <= 1 &&
+        b.top + b.height <= 1;
   }
 
   @override
   Widget build(BuildContext context) {
-    final palette = MemoPalette.of(context);
-    final theme = Theme.of(context);
-    final size = MediaQuery.of(context).size;
-
-    return Container(
-      height: size.height * 0.85,
-      decoration: BoxDecoration(
-        color: palette.surface,
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
-      ),
+    final p = MemoPalette.of(context);
+    final pageNumber =
+        sourcePage?.pageNumber ?? sourcePageNumber ?? sourceBlock?.pageNumber;
+    return SizedBox(
+      height: MediaQuery.sizeOf(context).height * .85,
       child: Column(
         children: [
-          const SizedBox(height: 12),
-          // Drag handle
-          Container(
-            width: 40,
-            height: 4,
-            decoration: BoxDecoration(
-              color: palette.outline.withValues(alpha: 0.3),
-              borderRadius: BorderRadius.circular(2),
-            ),
-          ),
-          const SizedBox(height: 12),
-
-          // Header
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 20),
+            padding: const EdgeInsets.fromLTRB(16, 12, 4, 4),
             child: Row(
               children: [
-                Icon(
-                  Icons.visibility_rounded,
-                  color: palette.primary,
-                  size: 22,
-                ),
-                const SizedBox(width: 10),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
                         'Đối chiếu nguồn dẫn chứng',
-                        style: theme.textTheme.titleMedium?.copyWith(
-                          fontWeight: FontWeight.bold,
-                        ),
+                        style: Theme.of(context).textTheme.titleMedium,
                       ),
                       Text(
-                        'Trang ${sourcePage?.pageNumber ?? sourceBlock?.pageNumber ?? 1} • $documentTitle',
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: palette.textMuted,
-                        ),
+                        [
+                          if (pageNumber != null) 'Trang $pageNumber',
+                          if (documentTitle.isNotEmpty) documentTitle,
+                        ].join(' • '),
                       ),
                     ],
                   ),
                 ),
                 IconButton(
-                  icon: const Icon(Icons.close_rounded),
+                  tooltip: 'Đóng',
                   onPressed: () => Navigator.of(context).pop(),
+                  icon: const Icon(Icons.close_rounded),
                 ),
               ],
             ),
           ),
-          const Divider(height: 16),
-
-          // Visual page viewer with bounding box highlight
+          const Divider(),
           Expanded(
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(16),
-                child: Container(
-                  color: palette.surfaceMuted,
-                  width: double.infinity,
-                  child: InteractiveViewer(
-                    maxScale: 3.0,
-                    child: Center(child: _buildPageContent(palette)),
-                  ),
-                ),
-              ),
-            ),
-          ),
-
-          // Source quote card
-          Padding(
-            padding: const EdgeInsets.all(16),
-            child: Container(
-              padding: const EdgeInsets.all(14),
-              decoration: BoxDecoration(
-                color: palette.hero,
-                borderRadius: BorderRadius.circular(14),
-                border: Border.all(
-                  color: palette.primary.withValues(alpha: 0.2),
-                ),
-              ),
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(16),
               child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  Row(
-                    children: [
-                      Icon(
-                        Icons.format_quote_rounded,
-                        size: 18,
-                        color: palette.primary,
-                      ),
-                      const SizedBox(width: 6),
-                      Text(
-                        'Trích dẫn nguồn:',
-                        style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.bold,
-                          color: palette.primary,
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 6),
+                  if (warning != null)
+                    Text(warning!, key: const Key('source-warning')),
+                  _page(p),
+                  const SizedBox(height: 16),
                   Text(
+                    'Trích dẫn nguồn:',
+                    style: Theme.of(context).textTheme.titleSmall,
+                  ),
+                  const SizedBox(height: 8),
+                  SelectableText(
                     '"$sourceQuote"',
-                    style: TextStyle(
-                      fontSize: 14,
-                      fontStyle: FontStyle.italic,
-                      color: palette.text,
-                      height: 1.4,
-                    ),
+                    key: const Key('source-quote'),
                   ),
                   if (sourceBlock != null) ...[
-                    const SizedBox(height: 6),
-                    Text(
-                      'Khối nguồn #${sourceBlock!.orderIndex + 1} • Trang ${sourceBlock!.pageNumber}',
-                      style: TextStyle(fontSize: 11, color: palette.textMuted),
-                    ),
+                    const SizedBox(height: 12),
+                    Text('Khối nguồn #${sourceBlock!.orderIndex + 1}'),
                   ],
                 ],
               ),
@@ -187,69 +146,69 @@ class SourceInspectionModal extends StatelessWidget {
     );
   }
 
-  Widget _buildPageContent(MemoPalette palette) {
-    final box = sourceBlock?.boundingBox;
-
-    if (sourcePageFile != null &&
-        sourcePageFile!.existsSync() &&
-        sourcePage != null) {
-      final width = sourcePage!.normalizedAsset?.width ?? sourcePage!.width;
-      final height = sourcePage!.normalizedAsset?.height ?? sourcePage!.height;
-      return AspectRatio(
-        aspectRatio: width / height,
-        child: Stack(
-          fit: StackFit.expand,
-          children: [
-            Image.file(sourcePageFile!, fit: BoxFit.fill),
-            if (box != null && sourceBlock!.hasValidBox && box.isValid)
-              CustomPaint(
-                painter: _BoundingBoxHighlightPainter(
-                  box: box,
-                  color: palette.warning,
-                ),
-              ),
-          ],
+  Widget _page(MemoPalette p) {
+    final file = sourcePageFile;
+    final page = sourcePage;
+    if (file == null || page == null || !file.existsSync()) {
+      return const Padding(
+        padding: EdgeInsets.all(24),
+        child: Text(
+          'Ảnh trang nguồn không còn khả dụng. Bạn vẫn có thể đọc đoạn trích đã lưu.',
         ),
       );
     }
-    // Fallback if image file is not loaded: display simulated page with highlighted block text
-    return SingleChildScrollView(
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(
-              Icons.menu_book_rounded,
-              size: 48,
-              color: palette.primary.withValues(alpha: 0.5),
-            ),
-            const SizedBox(height: 16),
-            Text(
-              'Khối văn bản nguồn:',
-              style: TextStyle(
-                fontSize: 12,
-                color: palette.textMuted,
-                fontWeight: FontWeight.bold,
+    final usesNormalized =
+        page.normalizedAsset != null &&
+        file.path == page.normalizedAsset!.absolutePath;
+    final width = usesNormalized ? page.normalizedAsset!.width : page.width;
+    final height = usesNormalized ? page.normalizedAsset!.height : page.height;
+    if (width <= 0 || height <= 0) {
+      return const Text('Kích thước ảnh nguồn không hợp lệ.');
+    }
+    return Column(
+      children: [
+        if (!_validBox) const Text('Vị trí đoạn nguồn không khả dụng.'),
+        SizedBox(
+          height: 320,
+          child: InteractiveViewer(
+            maxScale: 4,
+            child: Center(
+              child: AspectRatio(
+                aspectRatio: width / height,
+                child: Image.file(
+                  file,
+                  fit: BoxFit.fill,
+                  errorBuilder: (_, error, stack) => const Center(
+                    child: Text(
+                      'Không thể đọc ảnh nguồn. Đoạn trích vẫn được giữ lại.',
+                    ),
+                  ),
+                  frameBuilder: (context, image, frame, sync) {
+                    if (frame == null && !sync) {
+                      return const Center(child: CircularProgressIndicator());
+                    }
+                    return Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        image,
+                        if (_validBox &&
+                            (page.normalizedAsset == null || usesNormalized))
+                          CustomPaint(
+                            key: const Key('source-highlight'),
+                            painter: _BoundingBoxHighlightPainter(
+                              box: sourceBlock!.boundingBox!,
+                              color: p.warning,
+                            ),
+                          ),
+                      ],
+                    );
+                  },
+                ),
               ),
             ),
-            const SizedBox(height: 8),
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: palette.surface,
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: palette.warning, width: 2),
-              ),
-              child: Text(
-                sourceBlock?.normalizedText ?? sourceQuote,
-                style: const TextStyle(fontSize: 13, height: 1.4),
-                textAlign: TextAlign.center,
-              ),
-            ),
-          ],
+          ),
         ),
-      ),
+      ],
     );
   }
 }

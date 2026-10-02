@@ -5,16 +5,21 @@ import '../../material_generation/presentation/source_inspection_modal.dart';
 import '../application/get_card_source_trace_use_case.dart';
 import '../domain/deck_models.dart';
 import '../domain/deck_repository.dart';
+import 'card_editor_dialog.dart';
+import '../../review/domain/review_repository.dart';
+import '../../review/presentation/review_session_screen.dart';
 
 class DeckDetailScreen extends StatefulWidget {
   const DeckDetailScreen({
     super.key,
     required this.deckId,
     required this.repository,
+    this.reviewRepository,
   });
 
   final String deckId;
   final DeckRepository repository;
+  final ReviewRepository? reviewRepository;
 
   @override
   State<DeckDetailScreen> createState() => _DeckDetailScreenState();
@@ -51,7 +56,10 @@ class _DeckDetailScreenState extends State<DeckDetailScreen> {
           (card) =>
               card.front.toLowerCase().contains(query) ||
               card.back.toLowerCase().contains(query) ||
-              card.sourceQuote.toLowerCase().contains(query),
+              card.sourceQuote.toLowerCase().contains(query) ||
+              (card.explanation?.toLowerCase().contains(query) ?? false) ||
+              card.options.any((o) => o.text.toLowerCase().contains(query)) ||
+              card.tags.any((t) => t.toLowerCase().contains(query)),
         )
         .toList(growable: false);
   }
@@ -79,11 +87,32 @@ class _DeckDetailScreenState extends State<DeckDetailScreen> {
     }
   }
 
-  bool _hasSource(CardEntity card) =>
-      card.sourceDocumentId.trim().isNotEmpty &&
-      card.sourcePageId.trim().isNotEmpty &&
-      card.sourcePageNumber > 0 &&
-      card.sourceBlockId.trim().isNotEmpty;
+  bool _hasSource(CardEntity card) => card.hasSource;
+
+  Future<void> _editCard([CardEntity? card]) async {
+    final saved = await CardEditorDialog.show(
+      context,
+      repository: widget.repository,
+      deckId: widget.deckId,
+      card: card,
+    );
+    if (mounted && saved) await _loadDeck();
+  }
+
+  Future<void> _review([CardEntity? card]) async {
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (_) => ReviewSessionScreen(
+          deckId: widget.deckId,
+          cardId: card?.id,
+          dueOnly: false,
+          repository: widget.reviewRepository,
+          deckRepository: widget.repository,
+        ),
+      ),
+    );
+    if (mounted) await _loadDeck();
+  }
 
   Future<void> _viewSource(CardEntity card) async {
     if (!_hasSource(card)) return;
@@ -96,6 +125,9 @@ class _DeckDetailScreenState extends State<DeckDetailScreen> {
       sourceBlock: trace.sourceBlock,
       sourceQuote: trace.sourceQuote,
       sourcePageFile: trace.imageFile,
+      sourcePageNumber: trace.sourcePageNumber,
+      imageUsesNormalizedCoordinates: trace.imageUsesNormalizedCoordinates,
+      warning: trace.warning,
     );
   }
 
@@ -104,7 +136,9 @@ class _DeckDetailScreenState extends State<DeckDetailScreen> {
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Xóa thẻ?'),
-        content: const Text('Thẻ sẽ được chuyển vào mục đã xóa.'),
+        content: const Text(
+          'Thẻ sẽ không còn xuất hiện trong deck hoặc phiên ôn. Lịch sử và tài liệu nguồn được giữ lại.',
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(false),
@@ -138,7 +172,23 @@ class _DeckDetailScreenState extends State<DeckDetailScreen> {
   Widget build(BuildContext context) {
     final palette = MemoPalette.of(context);
     return Scaffold(
-      appBar: AppBar(title: Text(_deck?.title ?? 'Bộ thẻ')),
+      appBar: AppBar(
+        title: Text(_deck?.title ?? 'Bộ thẻ'),
+        actions: [
+          IconButton(
+            key: const Key('review-deck'),
+            tooltip: 'Ôn ngay',
+            onPressed: _deck == null ? null : () => _review(),
+            icon: const Icon(Icons.play_arrow),
+          ),
+          IconButton(
+            key: const Key('create-card'),
+            tooltip: 'Tạo thẻ thủ công',
+            onPressed: _deck == null ? null : () => _editCard(),
+            icon: const Icon(Icons.add),
+          ),
+        ],
+      ),
       body: Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 880),
@@ -256,6 +306,8 @@ class _DeckDetailScreenState extends State<DeckDetailScreen> {
           hasSource: hasSource,
           onViewSource: hasSource ? () => _viewSource(card) : null,
           onDelete: () => _deleteCard(card),
+          onEdit: () => _editCard(card),
+          onReview: () => _review(card),
         );
       },
     );
@@ -268,12 +320,15 @@ class _DeckCardItem extends StatelessWidget {
     required this.hasSource,
     required this.onViewSource,
     required this.onDelete,
+    required this.onEdit,
+    required this.onReview,
   });
 
   final CardEntity card;
   final bool hasSource;
   final VoidCallback? onViewSource;
   final VoidCallback onDelete;
+  final VoidCallback onEdit, onReview;
 
   @override
   Widget build(BuildContext context) {
@@ -314,6 +369,8 @@ class _DeckCardItem extends StatelessWidget {
                     style: Theme.of(context).textTheme.labelSmall,
                   ),
                 ),
+                for (final tag in card.tags) Chip(label: Text(tag)),
+                if (!hasSource) const Text('Không có nguồn'),
                 if (hasSource)
                   Row(
                     mainAxisSize: MainAxisSize.min,
@@ -347,6 +404,10 @@ class _DeckCardItem extends StatelessWidget {
                   : '$secondaryLabel: $secondaryContent',
               style: Theme.of(context).textTheme.bodyMedium,
             ),
+            if (card.options.isNotEmpty)
+              for (final o in card.options) Text('${o.optionId}: ${o.text}'),
+            if (card.explanation != null)
+              Text('Giải thích: ${card.explanation}'),
             const SizedBox(height: 10),
             Wrap(
               spacing: 8,
@@ -358,6 +419,16 @@ class _DeckCardItem extends StatelessWidget {
                     icon: const Icon(Icons.visibility_outlined),
                     label: const Text('Xem nguồn'),
                   ),
+                TextButton.icon(
+                  onPressed: onEdit,
+                  icon: const Icon(Icons.edit_outlined),
+                  label: const Text('Sửa thẻ'),
+                ),
+                TextButton.icon(
+                  onPressed: onReview,
+                  icon: const Icon(Icons.play_arrow),
+                  label: const Text('Ôn thẻ'),
+                ),
                 TextButton.icon(
                   onPressed: onDelete,
                   style: TextButton.styleFrom(foregroundColor: palette.error),

@@ -241,7 +241,8 @@ void main() {
 
       await tester.tap(find.byKey(const Key('tab-1')));
       await tester.pump();
-      expect(find.text('Màn hình này chưa được triển khai.'), findsOneWidget);
+      expect(find.byKey(const Key('search-decks')), findsOneWidget);
+      expect(find.byKey(const Key('create-deck')), findsOneWidget);
       await tester.tap(find.byKey(const Key('tab-0')));
       await tester.pump();
       expect(find.byKey(const Key('review-hero')), findsOneWidget);

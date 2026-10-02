@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:memo_mind/features/deck_management/domain/deck_models.dart';
 import 'package:memo_mind/features/deck_management/domain/deck_repository.dart';
+import 'package:memo_mind/features/home/domain/home_dashboard_data.dart';
 import 'package:memo_mind/features/document_import/domain/document_import_models.dart';
 import 'package:memo_mind/features/material_generation/domain/material_generation_models.dart';
 import 'package:memo_mind/features/material_generation/domain/material_generation_repository.dart';
@@ -34,18 +35,60 @@ class _MockDeckRepository implements DeckRepository {
   Future<Deck> createDeck({
     required String title,
     String? description,
-    dynamic tone,
+    DeckTone tone = DeckTone.indigo,
+    List<String> tags = const [],
   }) async {
     final d = Deck(
       id: 'deck-new',
       title: title,
       description: description,
+      tone: tone,
+      tags: tags,
       createdAt: DateTime.now(),
       updatedAt: DateTime.now(),
     );
     decks.add(d);
     return d;
   }
+
+  @override
+  Future<Deck> updateDeck(
+    String deckId, {
+    required String title,
+    String? description,
+    DeckTone? tone,
+    List<String>? tags,
+  }) async {
+    final index = decks.indexWhere((d) => d.id == deckId);
+    final d = decks[index].copyWith(
+      title: title,
+      description: description,
+      tone: tone,
+      tags: tags,
+    );
+    decks[index] = d;
+    return d;
+  }
+
+  @override
+  Future<void> deleteDeck(String deckId) async =>
+      decks.removeWhere((d) => d.id == deckId);
+  @override
+  Future<void> deleteCard(String cardId) async =>
+      savedCards.removeWhere((c) => c.id == cardId);
+  @override
+  Future<CardSourceTrace> getCardSourceTrace(CardEntity card) async =>
+      CardSourceTrace(documentTitle: '', sourceQuote: card.sourceQuote);
+  @override
+  Future<CardEntity> createManualCard({
+    required String deckId,
+    required CardContent content,
+  }) async => throw UnimplementedError('Not used by approval tests.');
+  @override
+  Future<CardEntity> updateCard(
+    String cardId, {
+    required CardContent content,
+  }) async => throw UnimplementedError('Not used by approval tests.');
 
   @override
   Future<List<CardEntity>> getCardsForDeck(String deckId) async => savedCards;
@@ -247,51 +290,84 @@ void main() {
       expect(find.text('Lưu các thẻ đã chọn (2)'), findsOneWidget);
     },
   );
-  testWidgets('MCQ preview shows all options and editing requires a new approval', (tester) async {
-    final deckRepo = _MockDeckRepository();
-    final ocrRepo = _MockOcrRepository();
-    final generationRepo = _MockMaterialGenRepo();
-    final now = DateTime.now();
-    final block = SourceBlock(
-      blockId: 'blk-1', documentId: 'doc-1', pageId: 'page-1',
-      pageNumber: 1, orderIndex: 0, rawText: 'Nguyên văn khối nguồn',
-      normalizedText: 'Hà Nội là thủ đô của Việt Nam',
-      status: BlockStatus.verified, createdAt: now, updatedAt: now);
-    final card = MaterialDraft(
-      id: 'mcq-1', type: CardType.mcq, front: 'Chọn thủ đô Việt Nam:',
-      back: 'Hà Nội', sourcePage: 1, sourceBlockId: 'blk-1',
-      sourceQuote: 'Hà Nội là thủ đô',
-      options: const [
-        McqOption(optionId:'A',text:'Hà Nội'), McqOption(optionId:'B',text:'Huế'),
-        McqOption(optionId:'C',text:'Đà Nẵng'), McqOption(optionId:'D',text:'Cần Thơ'),
-      ], correctOptionId:'A', explanation:'Nguồn ghi Hà Nội là thủ đô.',
-      status:DraftCardStatus.accepted);
-    tester.view.physicalSize=const Size(900,1400);
-    tester.view.devicePixelRatio=1;
-    addTearDown(tester.view.resetPhysicalSize);
-    addTearDown(tester.view.resetDevicePixelRatio);
-    await tester.pumpWidget(MaterialApp(theme:MemoTheme.light,home:
-      FlashcardReviewApprovalScreen(documentId:'doc-1',documentTitle:'Tài liệu',
-        targetDeck:deckRepo.decks.first,initialCards:[card],sourceBlocks:[block],sourcePages:const [],
-        deckRepository:deckRepo,ocrRepository:ocrRepo,generationRepository:generationRepo)));
-    await tester.pumpAndSettle();
-    expect(find.text('A. Hà Nội'),findsOneWidget);
-    expect(find.text('B. Huế'),findsOneWidget);
-    expect(find.text('C. Đà Nẵng'),findsOneWidget);
-    expect(find.text('D. Cần Thơ'),findsOneWidget);
-    await tester.tap(find.byTooltip('Chỉnh sửa thẻ'));
-    await tester.pumpAndSettle();
-    expect(find.byType(FlashcardEditDialog),findsOneWidget);
-    await tester.tap(find.byType(DropdownButtonFormField<String>));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('B').last);
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Lưu thay đổi'));
-    await tester.pumpAndSettle();
-    expect(find.text('Huế'),findsOneWidget);
-    expect(find.text('Đã chọn 0 / 1'),findsOneWidget);
-    expect(find.widgetWithText(FilledButton,'Chấp nhận'),findsOneWidget);
-    expect(find.text('Giải thích: Nguồn ghi Hà Nội là thủ đô.'),findsOneWidget);
-  });
-
+  testWidgets(
+    'MCQ preview shows all options and editing requires a new approval',
+    (tester) async {
+      final deckRepo = _MockDeckRepository();
+      final ocrRepo = _MockOcrRepository();
+      final generationRepo = _MockMaterialGenRepo();
+      final now = DateTime.now();
+      final block = SourceBlock(
+        blockId: 'blk-1',
+        documentId: 'doc-1',
+        pageId: 'page-1',
+        pageNumber: 1,
+        orderIndex: 0,
+        rawText: 'Nguyên văn khối nguồn',
+        normalizedText: 'Hà Nội là thủ đô của Việt Nam',
+        status: BlockStatus.verified,
+        createdAt: now,
+        updatedAt: now,
+      );
+      final card = MaterialDraft(
+        id: 'mcq-1',
+        type: CardType.mcq,
+        front: 'Chọn thủ đô Việt Nam:',
+        back: 'Hà Nội',
+        sourcePage: 1,
+        sourceBlockId: 'blk-1',
+        sourceQuote: 'Hà Nội là thủ đô',
+        options: const [
+          McqOption(optionId: 'A', text: 'Hà Nội'),
+          McqOption(optionId: 'B', text: 'Huế'),
+          McqOption(optionId: 'C', text: 'Đà Nẵng'),
+          McqOption(optionId: 'D', text: 'Cần Thơ'),
+        ],
+        correctOptionId: 'A',
+        explanation: 'Nguồn ghi Hà Nội là thủ đô.',
+        status: DraftCardStatus.accepted,
+      );
+      tester.view.physicalSize = const Size(900, 1400);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: MemoTheme.light,
+          home: FlashcardReviewApprovalScreen(
+            documentId: 'doc-1',
+            documentTitle: 'Tài liệu',
+            targetDeck: deckRepo.decks.first,
+            initialCards: [card],
+            sourceBlocks: [block],
+            sourcePages: const [],
+            deckRepository: deckRepo,
+            ocrRepository: ocrRepo,
+            generationRepository: generationRepo,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('A. Hà Nội'), findsOneWidget);
+      expect(find.text('B. Huế'), findsOneWidget);
+      expect(find.text('C. Đà Nẵng'), findsOneWidget);
+      expect(find.text('D. Cần Thơ'), findsOneWidget);
+      await tester.tap(find.byTooltip('Chỉnh sửa thẻ'));
+      await tester.pumpAndSettle();
+      expect(find.byType(FlashcardEditDialog), findsOneWidget);
+      await tester.tap(find.byType(DropdownButtonFormField<String>));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('B').last);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Lưu thay đổi'));
+      await tester.pumpAndSettle();
+      expect(find.text('Huế'), findsOneWidget);
+      expect(find.text('Đã chọn 0 / 1'), findsOneWidget);
+      expect(find.widgetWithText(FilledButton, 'Chấp nhận'), findsOneWidget);
+      expect(
+        find.text('Giải thích: Nguồn ghi Hà Nội là thủ đô.'),
+        findsOneWidget,
+      );
+    },
+  );
 }

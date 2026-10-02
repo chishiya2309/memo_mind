@@ -3,6 +3,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../material_generation/domain/material_generation_models.dart';
+import '../../material_generation/presentation/source_inspection_modal.dart';
+import '../../deck_management/application/get_card_source_trace_use_case.dart';
+import '../../deck_management/data/local_deck_repository.dart';
+import '../../deck_management/domain/deck_repository.dart';
+import '../../deck_management/domain/deck_models.dart';
 import '../application/review_session_controller.dart';
 import '../data/local_review_repository.dart';
 import '../domain/review_models.dart';
@@ -17,10 +22,12 @@ class ReviewSessionScreen extends StatefulWidget {
     this.dueOnly = true,
     this.deckId,
     this.cardId,
+    this.deckRepository,
   });
   final ReviewRepository? repository;
   final bool dueOnly;
   final String? deckId, cardId;
+  final DeckRepository? deckRepository;
   @override
   State<ReviewSessionScreen> createState() => _ReviewSessionScreenState();
 }
@@ -67,6 +74,24 @@ class _ReviewSessionScreenState extends State<ReviewSessionScreen> {
     } catch (_) {
       /* Optional feedback. */
     }
+  }
+
+  Future<void> _source(CardEntity card) async {
+    final trace = await GetCardSourceTraceUseCase(
+      deckRepository: widget.deckRepository ?? LocalDeckRepository(),
+    ).execute(card);
+    if (!mounted) return;
+    await SourceInspectionModal.show(
+      context,
+      documentTitle: trace.documentTitle,
+      sourcePage: trace.sourcePage,
+      sourceBlock: trace.sourceBlock,
+      sourceQuote: trace.sourceQuote,
+      sourcePageFile: trace.imageFile,
+      sourcePageNumber: trace.sourcePageNumber,
+      imageUsesNormalizedCoordinates: trace.imageUsesNormalizedCoordinates,
+      warning: trace.warning,
+    );
   }
 
   Future<void> _end() async {
@@ -205,6 +230,12 @@ class _ReviewSessionScreenState extends State<ReviewSessionScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          if (card.hasSource)
+            OutlinedButton.icon(
+              onPressed: controller.busy ? null : () => _source(card),
+              icon: const Icon(Icons.visibility_outlined),
+              label: const Text('Xem nguồn'),
+            ),
           Text(
             '${snapshot.reviewedCards}/${snapshot.session.initialCount} thẻ đã ôn • ${snapshot.session.remaining} lượt còn chờ',
           ),

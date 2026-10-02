@@ -18,7 +18,7 @@ Future<Database> reviewDatabase({int count = 2, String? path}) async {
     options: OpenDatabaseOptions(singleInstance: false),
   );
   await db.execute('PRAGMA foreign_keys = ON');
-  await MemoMindDatabase.createV6(db);
+  await MemoMindDatabase.createV8(db);
   await fixture.seed(db);
   final decks = LocalDeckRepository(
     database: MemoMindDatabase.forTesting(db),
@@ -32,7 +32,6 @@ Future<Database> reviewDatabase({int count = 2, String? path}) async {
         fixture.card('c$i', CardType.basic).copyWith(deckId: deck.id),
     ],
   );
-  await MemoMindDatabase.migrateV6ToV7(db);
   return db;
 }
 
@@ -61,7 +60,7 @@ void main() {
         options: OpenDatabaseOptions(singleInstance: false),
       );
       try {
-        await MemoMindDatabase.createV7(fresh);
+        await MemoMindDatabase.createV8(fresh);
         expect(await fresh.query('review_events'), isEmpty);
         expect(await fresh.query('review_sessions'), isEmpty);
       } finally {

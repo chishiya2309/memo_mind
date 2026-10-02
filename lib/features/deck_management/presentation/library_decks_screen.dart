@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../../shared/theme/memo_theme.dart';
 import '../domain/deck_models.dart';
+import '../../home/domain/home_dashboard_data.dart';
 import '../domain/deck_repository.dart';
 import 'widgets/confirm_delete_dialog.dart';
 import 'widgets/deck_form_dialog.dart';
@@ -11,10 +12,14 @@ class LibraryDecksScreen extends StatefulWidget {
     super.key,
     required this.repository,
     required this.onOpenDeck,
+    this.onOpenDeckAsync,
+    this.onChanged,
   });
 
   final DeckRepository repository;
   final ValueChanged<String> onOpenDeck;
+  final Future<void> Function(String)? onOpenDeckAsync;
+  final VoidCallback? onChanged;
 
   @override
   State<LibraryDecksScreen> createState() => _LibraryDecksScreenState();
@@ -71,40 +76,52 @@ class _LibraryDecksScreenState extends State<LibraryDecksScreen> {
     }
   }
 
-  Future<void> _createDeck() async {
-    final form = await DeckFormDialog.show(context);
-    if (form == null || !mounted) return;
-    try {
-      final deck = await widget.repository.createDeck(
-        title: form.title.trim(),
-        tags: form.tags.where((tag) => tag.trim().isNotEmpty).toList(),
-      );
-      if (!mounted) return;
-      setState(() => _decks = [deck, ..._decks]);
-    } catch (_) {
-      _showMutationError();
+  Future<void> _openDeck(String id) async {
+    if (widget.onOpenDeckAsync != null) {
+      await widget.onOpenDeckAsync!(id);
+      if (mounted) await _loadDecks();
+    } else {
+      widget.onOpenDeck(id);
     }
   }
 
+  Future<void> _createDeck() async {
+    Deck? created;
+    final form = await DeckFormDialog.show(
+      context,
+      onSave: (data) async {
+        created = await widget.repository.createDeck(
+          title: data.title,
+          tags: data.tags,
+        );
+      },
+    );
+    if (form == null || !mounted || created == null) return;
+    setState(() => _decks = [created!, ..._decks]);
+    widget.onChanged?.call();
+  }
+
   Future<void> _editDeck(Deck deck) async {
-    final form = await DeckFormDialog.show(context, deck: deck);
-    if (form == null || !mounted) return;
-    try {
-      final updated = await widget.repository.updateDeck(
-        deck.id,
-        title: form.title.trim(),
-        tags: form.tags.where((tag) => tag.trim().isNotEmpty).toList(),
-      );
-      if (!mounted) return;
-      setState(() {
-        _decks = [
-          for (final current in _decks)
-            current.id == deck.id ? updated : current,
-        ];
-      });
-    } catch (_) {
-      _showMutationError();
-    }
+    Deck? updated;
+    final form = await DeckFormDialog.show(
+      context,
+      deck: deck,
+      onSave: (data) async {
+        updated = await widget.repository.updateDeck(
+          deck.id,
+          title: data.title,
+          tags: data.tags,
+        );
+      },
+    );
+    if (form == null || !mounted || updated == null) return;
+    setState(() {
+      _decks = [
+        for (final current in _decks)
+          current.id == deck.id ? updated! : current,
+      ];
+    });
+    widget.onChanged?.call();
   }
 
   Future<void> _deleteDeck(Deck deck) async {
@@ -119,6 +136,7 @@ class _LibraryDecksScreenState extends State<LibraryDecksScreen> {
       setState(
         () => _decks = _decks.where((item) => item.id != deck.id).toList(),
       );
+      widget.onChanged?.call();
     } catch (_) {
       _showMutationError();
     }
@@ -260,7 +278,7 @@ class _LibraryDecksScreenState extends State<LibraryDecksScreen> {
       separatorBuilder: (_, _) => const SizedBox(height: 10),
       itemBuilder: (context, index) => _DeckListItem(
         deck: decks[index],
-        onOpen: widget.onOpenDeck,
+        onOpen: _openDeck,
         onEdit: _editDeck,
         onDelete: _deleteDeck,
       ),

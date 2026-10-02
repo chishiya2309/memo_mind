@@ -35,6 +35,7 @@ class LocalReviewRepository implements ReviewRepository {
         COALESCE(SUM(CASE WHEN c.due_date <= ? THEN 1 ELSE 0 END),0) AS due_count,
         COALESCE(SUM(CASE WHEN c.repetitions > 0 THEN 1 ELSE 0 END),0) AS learned_count
       FROM decks d LEFT JOIN cards c ON c.deck_id = d.deck_id AND c.status = 'active'
+      WHERE d.status='active'
       GROUP BY d.deck_id ORDER BY d.updated_at DESC, d.deck_id
     ''',
       [now.millisecondsSinceEpoch],
@@ -110,15 +111,19 @@ class LocalReviewRepository implements ReviewRepository {
   Future<Map<String, Object?>?> _card(DatabaseExecutor db, String id) async {
     final rows = await db.rawQuery(
       '''SELECT c.* FROM cards c JOIN decks d ON d.deck_id=c.deck_id
-      WHERE c.card_id=? AND c.status='active' ''',
+      WHERE c.card_id=? AND c.status='active' AND d.status='active' ''',
       [id],
     );
     if (rows.isEmpty) return null;
     try {
       final card = LocalDeckRepository.cardFromRow(rows.single);
-      if (card.front.trim().isEmpty || card.back.trim().isEmpty) return null;
+      card.content.validate();
       return rows.single;
     } on FormatException {
+      return null;
+    } on TypeError {
+      return null;
+    } on ArgumentError {
       return null;
     }
   }
@@ -241,7 +246,7 @@ class LocalReviewRepository implements ReviewRepository {
       final now = _clock().toUtc();
       final rows = await txn.rawQuery(
         '''SELECT c.* FROM cards c JOIN decks d ON d.deck_id=c.deck_id
-        WHERE c.status='active' ${dueOnly ? 'AND c.due_date <= ?' : ''}
+        WHERE c.status='active' AND d.status='active' ${dueOnly ? 'AND c.due_date <= ?' : ''}
         ${deckId != null ? 'AND c.deck_id=?' : ''} ${cardId != null ? 'AND c.card_id=?' : ''}
         ORDER BY c.due_date, c.created_at, c.card_id''',
         [if (dueOnly) now.millisecondsSinceEpoch, ?deckId, ?cardId],

@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:memo_mind/features/deck_management/domain/deck_models.dart';
 import 'package:memo_mind/features/home/domain/home_dashboard_data.dart';
@@ -110,6 +111,22 @@ void main() {
     testWidgets('${type.name}: reveal then rating completes and summarizes', (
       tester,
     ) async {
+      final haptics = <Object?>[];
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        (call) async {
+          if (call.method == 'HapticFeedback.vibrate') {
+            haptics.add(call.arguments);
+          }
+          return null;
+        },
+      );
+      addTearDown(
+        () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          SystemChannels.platform,
+          null,
+        ),
+      );
       final repo = ScreenRepository(fixture.card('c', type));
       await tester.pumpWidget(
         MaterialApp(home: ReviewSessionScreen(repository: repo)),
@@ -126,8 +143,44 @@ void main() {
       expect(find.text('Hoàn thành phiên ôn'), findsOneWidget);
       expect(find.text('1 thẻ đã ôn • 1 lượt đánh giá'), findsOneWidget);
       expect(repo.calls, 1);
+      expect(haptics, [
+        'HapticFeedbackType.lightImpact',
+        'HapticFeedbackType.lightImpact',
+      ]);
     });
   }
+  testWidgets('unsupported haptics do not interrupt reveal or rating', (
+    tester,
+  ) async {
+    var attempts = 0;
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      (call) async {
+        if (call.method == 'HapticFeedback.vibrate') {
+          attempts++;
+          throw PlatformException(code: 'unsupported');
+        }
+        return null;
+      },
+    );
+    addTearDown(
+      () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        null,
+      ),
+    );
+    final repo = ScreenRepository(fixture.card('c', CardType.basic));
+    await tester.pumpWidget(
+      MaterialApp(home: ReviewSessionScreen(repository: repo)),
+    );
+    await tester.pumpAndSettle();
+    await tapText(tester, 'Lật thẻ');
+    await tapText(tester, 'Good');
+    expect(find.text('Hoàn thành phiên ôn'), findsOneWidget);
+    expect(repo.calls, 1);
+    expect(attempts, 2);
+    expect(tester.takeException(), isNull);
+  });
   testWidgets(
     'Again is shown again and unique cards differ from rating count',
     (tester) async {

@@ -22,12 +22,14 @@ class GetCardSourceTraceUseCase {
       final block = trace.sourceBlock;
       SourceBlock? sourceBlock;
       if (block != null &&
+          !block.isDeleted &&
           block.blockId == card.sourceBlockId &&
           block.documentId == card.sourceDocumentId &&
           block.pageId == card.sourcePageId &&
           block.pageNumber == card.sourcePageNumber) {
         final box = block.boundingBox;
         final hasValidBox =
+            trace.imageUsesNormalizedCoordinates &&
             block.hasValidBox &&
             box != null &&
             box.left.isFinite &&
@@ -49,9 +51,27 @@ class GetCardSourceTraceUseCase {
         sourcePage: sourcePage,
         sourceBlock: sourceBlock,
         imageFile: sourcePage == null ? null : trace.imageFile,
+        sourcePageNumber: card.sourcePageNumber,
+        imageUsesNormalizedCoordinates: trace.imageUsesNormalizedCoordinates,
+        warning:
+            trace.warning ??
+            (sourcePage == null
+                ? 'Trang nguồn không còn khả dụng.'
+                : sourceBlock == null
+                ? 'Liên kết khối nguồn không còn khả dụng.'
+                : trace.imageFile == null
+                ? 'Ảnh trang nguồn không còn khả dụng.'
+                : !sourceBlock.hasValidBox
+                ? 'Vị trí đoạn nguồn không khả dụng.'
+                : null),
       );
     } catch (_) {
-      return CardSourceTrace(documentTitle: '', sourceQuote: card.sourceQuote);
+      return CardSourceTrace(
+        documentTitle: '',
+        sourceQuote: card.sourceQuote,
+        sourcePageNumber: card.sourcePageNumber,
+        warning: 'Không thể đọc nguồn đã lưu.',
+      );
     }
   }
 }

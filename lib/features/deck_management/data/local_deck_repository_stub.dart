@@ -1,3 +1,4 @@
+import 'dart:io';
 import '../../../core/database/memo_mind_database.dart';
 import '../../home/domain/home_dashboard_data.dart';
 import '../domain/deck_models.dart';
@@ -7,6 +8,7 @@ class LocalDeckRepository implements DeckRepository {
   const LocalDeckRepository({
     MemoMindDatabase? database,
     DateTime Function()? clock,
+    Future<Directory> Function()? supportDirectory,
   });
 
   @override
@@ -23,8 +25,7 @@ class LocalDeckRepository implements DeckRepository {
     String? description,
     DeckTone tone = DeckTone.indigo,
     List<String> tags = const [],
-  }) =>
-      Future.error(UnsupportedError('Deck storage unsupported on web.'));
+  }) => Future.error(UnsupportedError('Deck storage unsupported on web.'));
 
   @override
   Future<Deck> updateDeck(
@@ -33,8 +34,19 @@ class LocalDeckRepository implements DeckRepository {
     String? description,
     DeckTone? tone,
     List<String>? tags,
-  }) =>
-      Future.error(UnsupportedError('Deck storage unsupported on web.'));
+  }) => Future.error(UnsupportedError('Deck storage unsupported on web.'));
+
+  @override
+  Future<CardEntity> createManualCard({
+    required String deckId,
+    required CardContent content,
+  }) => Future.error(UnsupportedError('Deck storage unsupported on web.'));
+
+  @override
+  Future<CardEntity> updateCard(
+    String cardId, {
+    required CardContent content,
+  }) => Future.error(UnsupportedError('Deck storage unsupported on web.'));
 
   @override
   Future<void> deleteDeck(String deckId) =>
@@ -52,8 +64,7 @@ class LocalDeckRepository implements DeckRepository {
   Future<void> saveCardsToDeck({
     required String deckId,
     required List<CardEntity> cards,
-  }) =>
-      Future.error(UnsupportedError('Deck storage unsupported on web.'));
+  }) => Future.error(UnsupportedError('Deck storage unsupported on web.'));
 
   @override
   Future<List<CardEntity>> getCardsForDeck(String deckId) =>

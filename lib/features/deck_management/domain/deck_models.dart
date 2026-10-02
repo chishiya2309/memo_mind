@@ -1,5 +1,8 @@
 import 'dart:io';
 
+import 'card_content.dart';
+export 'card_content.dart';
+
 import '../../document_import/domain/document_import_models.dart';
 import '../../ocr_editor/domain/ocr_models.dart';
 import '../../material_generation/domain/material_generation_models.dart';
@@ -73,14 +76,14 @@ class Deck {
 
   @override
   int get hashCode => Object.hash(
-        id,
-        title,
-        description,
-        tone,
-        cardCount,
-        Object.hashAll(tags),
-        status,
-      );
+    id,
+    title,
+    description,
+    tone,
+    cardCount,
+    Object.hashAll(tags),
+    status,
+  );
 }
 
 enum CardStatus { active, suspended, deleted }
@@ -93,11 +96,12 @@ class CardEntity {
     required this.type,
     required this.front,
     required this._back,
-    required this.sourceDocumentId,
-    required this.sourcePageId,
-    required this.sourcePageNumber,
-    required this.sourceBlockId,
-    required this.sourceQuote,
+    this.sourceDocumentId,
+    this.sourcePageId,
+    this.sourcePageNumber,
+    this.sourceBlockId,
+    this.sourceQuote = '',
+    this.tags = const [],
     this.options = const [],
     this.correctOptionId,
     this.explanation,
@@ -118,44 +122,68 @@ class CardEntity {
       ? options.where((o) => o.optionId == correctOptionId).firstOrNull?.text ??
             ''
       : _back;
-  final String sourceDocumentId, sourcePageId, sourceBlockId, sourceQuote;
-  final int sourcePageNumber;
+  final String? sourceDocumentId, sourcePageId, sourceBlockId;
+  final String sourceQuote;
+  final int? sourcePageNumber;
+  final List<String> tags;
+  bool get hasSource =>
+      sourceQuote.trim().isNotEmpty ||
+      [
+        sourceDocumentId,
+        sourcePageId,
+        sourceBlockId,
+      ].any((s) => s != null && s.trim().isNotEmpty);
+  CardContent get content => CardContent(
+    type: type,
+    front: front,
+    back: back,
+    options: options,
+    correctOptionId: correctOptionId,
+    explanation: explanation,
+    tags: tags,
+  );
   final double? confidence;
   final CardStatus status;
   final int repetitions, intervalDays;
   final double easeFactor;
   final DateTime dueDate, createdAt, updatedAt;
-  CardEntity copyWith({String? id, String? deckId, CardStatus? status}) =>
-      CardEntity(
-        id: id ?? this.id,
-        deckId: deckId ?? this.deckId,
-        type: type,
-        front: front,
-        back: back,
-        options: options,
-        correctOptionId: correctOptionId,
-        explanation: explanation,
-        sourceDocumentId: sourceDocumentId,
-        sourcePageId: sourcePageId,
-        sourcePageNumber: sourcePageNumber,
-        sourceBlockId: sourceBlockId,
-        sourceQuote: sourceQuote,
-        confidence: confidence,
-        status: status ?? this.status,
-        repetitions: repetitions,
-        intervalDays: intervalDays,
-        easeFactor: easeFactor,
-        dueDate: dueDate,
-        createdAt: createdAt,
-        updatedAt: updatedAt,
-      );
+  CardEntity copyWith({
+    String? id,
+    String? deckId,
+    CardStatus? status,
+    CardContent? content,
+    DateTime? updatedAt,
+  }) => CardEntity(
+    id: id ?? this.id,
+    deckId: deckId ?? this.deckId,
+    type: type,
+    tags: content == null ? tags : CardContent.normalizeTags(content.tags),
+    front: content?.front.trim() ?? front,
+    back: content?.answer.trim() ?? back,
+    options: content?.options ?? options,
+    correctOptionId: content?.correctOptionId ?? correctOptionId,
+    explanation: content?.explanation?.trim() ?? explanation,
+    sourceDocumentId: sourceDocumentId,
+    sourcePageId: sourcePageId,
+    sourcePageNumber: sourcePageNumber,
+    sourceBlockId: sourceBlockId,
+    sourceQuote: sourceQuote,
+    confidence: confidence,
+    status: status ?? this.status,
+    repetitions: repetitions,
+    intervalDays: intervalDays,
+    easeFactor: easeFactor,
+    dueDate: dueDate,
+    createdAt: createdAt,
+    updatedAt: updatedAt ?? this.updatedAt,
+  );
   MaterialDraft toDraft() => MaterialDraft(
     id: id,
     type: type,
     front: front,
     back: back,
-    sourcePage: sourcePageNumber,
-    sourceBlockId: sourceBlockId,
+    sourcePage: sourcePageNumber ?? 0,
+    sourceBlockId: sourceBlockId ?? '',
     sourceQuote: sourceQuote,
     options: options,
     correctOptionId: correctOptionId,
@@ -173,6 +201,9 @@ class CardSourceTrace {
     this.sourcePage,
     this.sourceBlock,
     this.imageFile,
+    this.sourcePageNumber,
+    this.imageUsesNormalizedCoordinates = false,
+    this.warning,
   });
 
   final String documentTitle;
@@ -180,9 +211,11 @@ class CardSourceTrace {
   final SourcePage? sourcePage;
   final SourceBlock? sourceBlock;
   final File? imageFile;
+  final int? sourcePageNumber;
+  final bool imageUsesNormalizedCoordinates;
+  final String? warning;
 
   SourcePage? get page => sourcePage;
   SourceBlock? get block => sourceBlock;
   File? get sourcePageFile => imageFile;
 }
-
