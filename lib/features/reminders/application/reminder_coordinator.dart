@@ -38,6 +38,7 @@ class ReminderCoordinator extends ChangeNotifier {
   }
 
   Future<void> reconcile({bool force = false}) {
+    if (_disposed) return Future<void>.value();
     _requested = true;
     _force |= force;
     if (_refresh != null) return _refresh!;
@@ -186,6 +187,18 @@ class ReminderCoordinator extends ChangeNotifier {
       ReminderStatus.needsReconcile => 'Chưa cập nhật được lịch nhắc',
       ReminderStatus.unsupported => 'Nhắc học hiện hỗ trợ trên Android.',
     };
+  }
+
+  /// Drain work bound to the old database before switching account/workspace.
+  Future<void> shutdown() async {
+    _disposed = true;
+    _requested = false;
+    await _tail;
+    if (!gateway.supported) return;
+    final ids = {...await gateway.pendingIds(), ...await gateway.activeIds()};
+    for (final id in ids.where(ReminderOccurrence.ownsId)) {
+      await gateway.cancel(id);
+    }
   }
 
   @override

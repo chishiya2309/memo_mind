@@ -1,8 +1,10 @@
+import '../../../core/workspace/workspace_context.dart';
+
 import 'dart:convert';
 import 'dart:io';
 
 import 'package:path/path.dart' as p;
-import 'package:path_provider/path_provider.dart';
+
 import 'package:uuid/uuid.dart';
 import 'package:sqflite/sqflite.dart';
 
@@ -23,9 +25,10 @@ class LocalDeckRepository implements DeckRepository {
     MemoMindDatabase? database,
     DateTime Function()? clock,
     DirectoryProvider? supportDirectory,
-  }) : _database = database ?? MemoMindDatabase.instance,
+  }) : _database = database ?? WorkspaceRuntime.database,
        _clock = clock ?? DateTime.now,
-       _supportDirectory = supportDirectory ?? getApplicationSupportDirectory;
+       _supportDirectory =
+           supportDirectory ?? WorkspaceRuntime.captureDirectory();
 
   final MemoMindDatabase _database;
   final DateTime Function() _clock;

@@ -1,3 +1,5 @@
+import '../../../core/workspace/workspace_context.dart';
+
 import 'dart:convert';
 
 import 'package:sqflite/sqflite.dart';
@@ -8,7 +10,10 @@ import '../domain/reminder_settings_repository.dart';
 
 class LocalReminderSettingsRepository implements ReminderSettingsRepository {
   LocalReminderSettingsRepository({MemoMindDatabase? database})
-    : _database = database ?? MemoMindDatabase.instance;
+    : _database =
+          database ??
+          WorkspaceRuntime.deviceSettings ??
+          WorkspaceRuntime.database;
   final MemoMindDatabase _database;
   static const settingsKey = 'fr16.reminder_settings';
   static const stateKey = 'fr16.reminder_scheduling';

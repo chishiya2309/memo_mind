@@ -1,3 +1,5 @@
+import '../../../core/workspace/workspace_context.dart';
+
 import 'dart:convert';
 
 import 'package:sqflite/sqflite.dart';
@@ -16,7 +18,7 @@ class LocalReviewRepository implements ReviewRepository {
   LocalReviewRepository({
     MemoMindDatabase? database,
     DateTime Function()? clock,
-  }) : _database = database ?? MemoMindDatabase.instance,
+  }) : _database = database ?? WorkspaceRuntime.database,
        _clock = clock ?? DateTime.now;
   final MemoMindDatabase _database;
   final DateTime Function() _clock;
@@ -326,7 +328,7 @@ class LocalReviewRepository implements ReviewRepository {
         'event_id': eventId,
         'session_id': sessionId,
         'card_id': cardId,
-        'device_id': device,
+        'device_id': WorkspaceRuntime.deviceId ?? device,
         'reviewed_at': reviewedAt.millisecondsSinceEpoch,
         'rating': rating.name,
       });

@@ -8,9 +8,14 @@ class MemoMindDatabase {
 
   MemoMindDatabase.forTesting(Database database) : _database = database;
 
+  MemoMindDatabase.atPath(String path) : _path = path;
+  String? _path;
+  bool _revoked = false;
+
   static final MemoMindDatabase instance = MemoMindDatabase._();
 
   Database? _database;
+  Future<Database>? _opening;
 
   final _studyChanges = StreamController<void>.broadcast();
   Stream<void> get studyChanges => _studyChanges.stream;
@@ -18,15 +23,30 @@ class MemoMindDatabase {
   // Publish only after a successful commit. Async listeners cannot fail the write.
   void notifyStudyChanged() => _studyChanges.add(null);
 
-  Future<Database> get database async => _database ??= await _open();
+  Future<Database> get database async {
+    if (_revoked) throw StateError('Kho đã đóng. Hãy mở lại màn hình học.');
+    if (_database != null) return _database!;
+    final db = await (_opening ??= _open());
+    if (_revoked) {
+      await db.close();
+      throw StateError('Kho đã đóng.');
+    }
+    return _database = db;
+  }
+
+  Future<void> revoke() async {
+    _revoked = true;
+    await close();
+  }
 
   Future<Database> _open() async {
     final root = await getDatabasesPath();
     return openDatabase(
-      p.join(root, 'memo_mind.db'),
-      version: 8,
+      _path ?? p.join(root, 'memo_mind.db'),
+      singleInstance: false,
+      version: 9,
       onConfigure: (db) async => db.execute('PRAGMA foreign_keys = ON'),
-      onCreate: (db, version) => createV8(db),
+      onCreate: (db, version) => createV9(db),
       onUpgrade: (db, oldVersion, newVersion) async {
         if (oldVersion < 2) await migrateV1ToV2(db);
         if (oldVersion < 3) await migrateV2ToV3(db);
@@ -35,6 +55,7 @@ class MemoMindDatabase {
         if (oldVersion < 6) await migrateV5ToV6(db);
         if (oldVersion < 7) await migrateV6ToV7(db);
         if (oldVersion < 8) await migrateV7ToV8(db);
+        if (oldVersion < 9) await migrateV8ToV9(db);
       },
     );
   }
@@ -630,8 +651,40 @@ class MemoMindDatabase {
   }
 
   Future<void> close() async {
-    final db = _database;
+    final db = _database ?? await _opening;
     _database = null;
+    _opening = null;
     await db?.close();
+  }
+
+  static const studyTables = [
+    'documents',
+    'source_pages',
+    'page_normalizations',
+    'ocr_page_results',
+    'source_blocks',
+    'decks',
+    'cards',
+    'review_sessions',
+    'review_events',
+  ];
+
+  static Future<void> createV9(DatabaseExecutor db) async {
+    await createV8(db);
+    await migrateV8ToV9(db);
+  }
+
+  static Future<void> migrateV8ToV9(DatabaseExecutor db) async {
+    await db.execute(
+      'CREATE TABLE workspace_revision (id INTEGER PRIMARY KEY CHECK(id=1), revision INTEGER NOT NULL)',
+    );
+    await db.insert('workspace_revision', {'id': 1, 'revision': 0});
+    for (final table in studyTables) {
+      for (final operation in ['INSERT', 'UPDATE', 'DELETE']) {
+        await db.execute(
+          'CREATE TRIGGER revision_${table}_${operation.toLowerCase()} AFTER $operation ON $table BEGIN UPDATE workspace_revision SET revision=revision+1 WHERE id=1; END',
+        );
+      }
+    }
   }
 }

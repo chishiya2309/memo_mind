@@ -1,3 +1,6 @@
+import '../../../core/workspace/workspace_context.dart';
+import '../../../core/workspace/source_file_pins.dart';
+
 import 'dart:io';
 import 'dart:isolate';
 
@@ -5,7 +8,7 @@ import 'package:crypto/crypto.dart';
 import 'package:flutter/services.dart';
 import 'package:image/image.dart' as img;
 import 'package:path/path.dart' as p;
-import 'package:path_provider/path_provider.dart';
+
 import 'package:sqflite/sqflite.dart';
 import 'package:uuid/uuid.dart';
 
@@ -30,10 +33,11 @@ class LocalImageNormalizationRepository
     DateTime Function()? clock,
     NormalizationDirectoryProvider? supportDirectory,
     this.availableBytes,
-  }) : _database = database ?? MemoMindDatabase.instance,
+  }) : _database = database ?? WorkspaceRuntime.database,
        _uuid = uuid ?? const Uuid(),
        _clock = clock ?? DateTime.now,
-       _supportDirectory = supportDirectory ?? getApplicationSupportDirectory;
+       _supportDirectory =
+           supportDirectory ?? WorkspaceRuntime.captureDirectory();
 
   static const _storageChannel = MethodChannel('memo_mind/storage');
   static const _reserveBytes = 10 * 1024 * 1024;
@@ -122,7 +126,7 @@ class LocalImageNormalizationRepository
           'documents',
           page.documentId,
           'normalized',
-          '${page.pageId}-$revision.png',
+          '${page.pageId}-$revision-$token.png',
         )
         .replaceAll('\\', '/');
     final destination = _resolveRelative(support.path, relativePath);
@@ -218,7 +222,7 @@ class LocalImageNormalizationRepository
 
   Future<void> _deleteFile(File file) async {
     try {
-      if (await file.exists()) await file.delete();
+      await SourceFilePins.delete(file);
     } on FileSystemException {
       // Startup recovery removes unreferenced files.
     }
