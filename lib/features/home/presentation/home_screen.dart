@@ -1,6 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../statistics/application/statistics_controller.dart';
+import '../../statistics/presentation/statistics_panel.dart';
+import '../../statistics/presentation/statistics_screen.dart';
+
 import '../../deck_management/data/local_deck_repository.dart';
 import '../../deck_management/domain/deck_repository.dart';
 import '../../deck_management/presentation/library_decks_screen.dart';
@@ -17,7 +21,6 @@ class HomeActions {
     required this.onOpenDeck,
     required this.onStartDeckReview,
     required this.onOpenDocument,
-    required this.onOpenStatistics,
     required this.onOpenLibrary,
     required this.onOpenProfile,
     required this.onOpenApprovals,
@@ -33,7 +36,6 @@ class HomeActions {
   final ValueChanged<String> onOpenDeck;
   final ValueChanged<String> onStartDeckReview;
   final ValueChanged<String> onOpenDocument;
-  final VoidCallback onOpenStatistics;
   final VoidCallback onOpenLibrary;
   final VoidCallback onOpenProfile;
   final VoidCallback onOpenApprovals;
@@ -51,6 +53,9 @@ class HomeScreen extends StatefulWidget {
     this.libraryRepository,
     this.onOpenDeckAsync,
     this.profilePage,
+    this.statisticsController,
+    this.statisticsRouteObserver,
+    this.onOpenDueCards,
   });
 
   final HomeDashboardData data;
@@ -58,15 +63,67 @@ class HomeScreen extends StatefulWidget {
   final DeckRepository? libraryRepository;
   final Future<void> Function(String)? onOpenDeckAsync;
   final Widget? profilePage;
+  final StatisticsController? statisticsController;
+  final RouteObserver<ModalRoute<void>>? statisticsRouteObserver;
+  final Future<void> Function()? onOpenDueCards;
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _HomeScreenState extends State<HomeScreen> with RouteAware {
   int selectedTab = 0;
+  ModalRoute<void>? _route;
+  bool _routeVisible = true;
   late final DeckRepository _libraryRepository =
       widget.libraryRepository ?? LocalDeckRepository();
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final route = ModalRoute.of<void>(context);
+    if (route != _route) {
+      widget.statisticsRouteObserver?.unsubscribe(this);
+      _route = route;
+      if (route != null) widget.statisticsRouteObserver?.subscribe(this, route);
+    }
+    _routeVisible = route?.isCurrent ?? true;
+    _updateStatisticsVisibility();
+  }
+
+  void _updateStatisticsVisibility() => widget.statisticsController?.setVisible(
+    _routeVisible && (selectedTab == 0 || selectedTab == 2),
+  );
+
+  void _selectTab(int index) {
+    final statisticsWasVisible =
+        _routeVisible && (selectedTab == 0 || selectedTab == 2);
+    setState(() => selectedTab = index);
+    _updateStatisticsVisibility();
+    if (index == 0) widget.actions.onRetryLoad();
+    if (index == 2 && statisticsWasVisible) {
+      widget.statisticsController?.refresh();
+    }
+  }
+
+  @override
+  void didPushNext() {
+    _routeVisible = false;
+    _updateStatisticsVisibility();
+  }
+
+  @override
+  void didPopNext() {
+    _routeVisible = true;
+    _updateStatisticsVisibility();
+  }
+
+  @override
+  void dispose() {
+    widget.statisticsRouteObserver?.unsubscribe(this);
+    widget.statisticsController?.setVisible(false);
+    super.dispose();
+  }
 
   Future<void> _showCreateSheet() async {
     final source = await showModalBottomSheet<ImportSource>(
@@ -93,6 +150,9 @@ class _HomeScreenState extends State<HomeScreen> {
                 data: widget.data,
                 actions: widget.actions,
                 onCreate: _showCreateSheet,
+                statisticsController: widget.statisticsController,
+                onStatistics: () => _selectTab(2),
+                onOpenDueCards: widget.onOpenDueCards ?? () async {},
               )
             : selectedTab == 1
             ? LibraryDecksScreen(
@@ -101,6 +161,11 @@ class _HomeScreenState extends State<HomeScreen> {
                 onOpenDeckAsync: widget.onOpenDeckAsync,
                 onChanged: widget.actions.onRetryLoad,
               )
+            : selectedTab == 2
+            ? StatisticsScreen(
+                controller: widget.statisticsController,
+                onOpenDueCards: widget.onOpenDueCards ?? () async {},
+              )
             : selectedTab == 3 && widget.profilePage != null
             ? widget.profilePage!
             : _TabPlaceholder(index: selectedTab),
@@ -108,6 +173,7 @@ class _HomeScreenState extends State<HomeScreen> {
       floatingActionButton: selectedTab == 0
           ? FloatingActionButton.extended(
               key: const Key('create-material-fab'),
+              heroTag: null,
               onPressed: _showCreateSheet,
               backgroundColor: p.primary,
               foregroundColor: Theme.of(context).colorScheme.onPrimary,
@@ -121,10 +187,7 @@ class _HomeScreenState extends State<HomeScreen> {
       floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
       bottomNavigationBar: _BottomNavigation(
         selectedTab: selectedTab,
-        onSelect: (index) {
-          setState(() => selectedTab = index);
-          if (index == 0) widget.actions.onRetryLoad();
-        },
+        onSelect: _selectTab,
       ),
     );
   }
@@ -135,11 +198,17 @@ class _HomeDashboard extends StatelessWidget {
     required this.data,
     required this.actions,
     required this.onCreate,
+    required this.statisticsController,
+    required this.onStatistics,
+    required this.onOpenDueCards,
   });
 
   final HomeDashboardData data;
   final HomeActions actions;
   final VoidCallback onCreate;
+  final StatisticsController? statisticsController;
+  final VoidCallback onStatistics;
+  final Future<void> Function() onOpenDueCards;
 
   @override
   Widget build(BuildContext context) {
@@ -209,9 +278,10 @@ class _HomeDashboard extends StatelessWidget {
                         ),
                       ],
                       const SizedBox(height: 24),
-                      WeeklyStatsSection(
-                        stats: data.weeklyStats,
-                        onDetails: actions.onOpenStatistics,
+                      StatisticsPanel(
+                        controller: statisticsController,
+                        onDetails: onStatistics,
+                        onOpenDueCards: onOpenDueCards,
                       ),
                       if (data.recentDecks.isNotEmpty) ...[
                         const SizedBox(height: 24),

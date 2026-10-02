@@ -48,6 +48,14 @@ On Android, open **Cá nhân → Cài đặt → Nhắc học** to enable remind
 
 See [FR16 validation and device checks](docs/fr16-validation.md) for AC01–AC09 coverage, native integration commands, and the boot receiver compatibility contract.
 
+## Basic learning statistics (FR17)
+
+On Android, **Thống kê** and the home summary share four local SQLite metrics: currently due cards, today's committed review attempts, self-rated success percentage (Hard/Good/Easy), and the current study streak. Multiple ratings of the same card count as separate attempts. Empty history displays a dash for the percentage; ordinary card/deck deletion retains historical attempts.
+
+Statistics refresh after study commits, on returning/resuming, at local midnight and the next due timestamp. Device timezone/clock changes are checked every 30 seconds while visible. Errors retain a prior snapshot with a stale label or show retry; malformed review records are excluded with a warning. No network, login or notification permission is required.
+
+See [FR17 validation and Android checks](docs/fr17-validation.md) for AC01–AC11 coverage and the isolated native integration test.
+
 ## Deck management and sources (UC10)
 
 Open **Thư viện** to create, rename, tag, search, or delete a deck. In the deck, add a BASIC, CLOZE, or MCQ card, edit its content/tags, search by content/tags, or review it immediately. Editing an existing card preserves its type, source, schedule, and history. Manual cards have no required source and are immediately due with EF 2.5, repetitions 0, and interval 0.

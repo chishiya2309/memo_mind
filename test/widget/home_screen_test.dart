@@ -51,7 +51,6 @@ HomeActions actions({
   onOpenDeck: onOpenDeck ?? (_) {},
   onStartDeckReview: onStartDeckReview ?? (_) {},
   onOpenDocument: (_) {},
-  onOpenStatistics: () {},
   onOpenLibrary: () {},
   onOpenProfile: () {},
   onOpenApprovals: () {},
@@ -98,7 +97,7 @@ void main() {
     expect(find.text('Chào buổi sáng, Hưng'), findsOneWidget);
     expect(find.text('11 thẻ còn lại'), findsOneWidget);
     expect(find.text('7/18'), findsOneWidget);
-    expect(find.text('Tuần này'), findsOneWidget);
+    expect(find.text('Thống kê học tập'), findsOneWidget);
     expect(find.text('Tiếp tục học'), findsOneWidget);
 
     await tester.tap(find.byKey(const Key('start-review')));
@@ -125,7 +124,7 @@ void main() {
 
     expect(find.text('Biến bài giảng thành bộ thẻ đầu tiên'), findsOneWidget);
     expect(
-      find.text('Học thêm một vài phiên để xem xu hướng tuần.'),
+      find.text('Thống kê học tập hiện hỗ trợ trên Android.'),
       findsOneWidget,
     );
     expect(find.text('0%'), findsNothing);
