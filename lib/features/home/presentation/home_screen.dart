@@ -50,12 +50,14 @@ class HomeScreen extends StatefulWidget {
     required this.actions,
     this.libraryRepository,
     this.onOpenDeckAsync,
+    this.profilePage,
   });
 
   final HomeDashboardData data;
   final HomeActions actions;
   final DeckRepository? libraryRepository;
   final Future<void> Function(String)? onOpenDeckAsync;
+  final Widget? profilePage;
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -99,6 +101,8 @@ class _HomeScreenState extends State<HomeScreen> {
                 onOpenDeckAsync: widget.onOpenDeckAsync,
                 onChanged: widget.actions.onRetryLoad,
               )
+            : selectedTab == 3 && widget.profilePage != null
+            ? widget.profilePage!
             : _TabPlaceholder(index: selectedTab),
       ),
       floatingActionButton: selectedTab == 0

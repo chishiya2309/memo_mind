@@ -1,6 +1,7 @@
 package com.example.memo_mind
 
 import android.os.StatFs
+import android.os.Build
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -8,6 +9,13 @@ import io.flutter.plugin.common.MethodChannel
 class MainActivity : FlutterActivity() {
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "memo_mind/reminders")
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "getSdkInt" -> result.success(Build.VERSION.SDK_INT)
+                    else -> result.notImplemented()
+                }
+            }
         MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
             "memo_mind/storage",

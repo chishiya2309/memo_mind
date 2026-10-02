@@ -10,6 +10,7 @@ import '../../home/domain/home_dashboard_data.dart';
 import '../domain/review_models.dart';
 import '../domain/review_repository.dart';
 import '../domain/sm2_scheduler.dart';
+import 'local_due_cards_source_io.dart';
 
 class LocalReviewRepository implements ReviewRepository {
   LocalReviewRepository({
@@ -29,25 +30,31 @@ class LocalReviewRepository implements ReviewRepository {
   }
 
   Future<List<ReviewDeck>> _decks(DatabaseExecutor db, DateTime now) async {
-    final rows = await db.rawQuery(
-      '''
-      SELECT d.deck_id, d.title, COUNT(c.card_id) AS active_count,
-        COALESCE(SUM(CASE WHEN c.due_date <= ? THEN 1 ELSE 0 END),0) AS due_count,
-        COALESCE(SUM(CASE WHEN c.repetitions > 0 THEN 1 ELSE 0 END),0) AS learned_count
-      FROM decks d LEFT JOIN cards c ON c.deck_id = d.deck_id AND c.status = 'active'
-      WHERE d.status='active'
-      GROUP BY d.deck_id ORDER BY d.updated_at DESC, d.deck_id
-    ''',
-      [now.millisecondsSinceEpoch],
+    final eligible = await LocalDueCardsSource.query(db);
+    final counts = <String, (int, int, int)>{};
+    for (final item in eligible) {
+      final card = item.card;
+      final (active, due, learned) = counts[card.deckId] ?? (0, 0, 0);
+      counts[card.deckId] = (
+        active + 1,
+        due + (card.dueDate.isAfter(now) ? 0 : 1),
+        learned + (card.repetitions > 0 ? 1 : 0),
+      );
+    }
+    final rows = await db.query(
+      'decks',
+      columns: ['deck_id', 'title'],
+      where: "status='active'",
+      orderBy: 'updated_at DESC, deck_id',
     );
     return rows
         .map(
           (r) => ReviewDeck(
             id: r['deck_id'] as String,
             title: r['title'] as String,
-            activeCount: r['active_count'] as int,
-            dueCount: r['due_count'] as int,
-            learnedCount: r['learned_count'] as int,
+            activeCount: counts[r['deck_id']]?.$1 ?? 0,
+            dueCount: counts[r['deck_id']]?.$2 ?? 0,
+            learnedCount: counts[r['deck_id']]?.$3 ?? 0,
           ),
         )
         .toList();
@@ -114,7 +121,9 @@ class LocalReviewRepository implements ReviewRepository {
       WHERE c.card_id=? AND c.status='active' AND d.status='active' ''',
       [id],
     );
-    if (rows.isEmpty) return null;
+    if (rows.isEmpty || !LocalDueCardsSource.isEligible(rows.single)) {
+      return null;
+    }
     try {
       final card = LocalDeckRepository.cardFromRow(rows.single);
       card.content.validate();
@@ -244,19 +253,13 @@ class LocalReviewRepository implements ReviewRepository {
         if (snapshot.session.isActive) return snapshot;
       }
       final now = _clock().toUtc();
-      final rows = await txn.rawQuery(
-        '''SELECT c.* FROM cards c JOIN decks d ON d.deck_id=c.deck_id
-        WHERE c.status='active' AND d.status='active' ${dueOnly ? 'AND c.due_date <= ?' : ''}
-        ${deckId != null ? 'AND c.deck_id=?' : ''} ${cardId != null ? 'AND c.card_id=?' : ''}
-        ORDER BY c.due_date, c.created_at, c.card_id''',
-        [if (dueOnly) now.millisecondsSinceEpoch, ?deckId, ?cardId],
+      final cards = await LocalDueCardsSource.query(
+        txn,
+        at: dueOnly ? now : null,
+        deckId: deckId,
+        cardId: cardId,
       );
-      final ids = <String>[];
-      for (final row in rows) {
-        if (await _card(txn, row['card_id'] as String) != null) {
-          ids.add(row['card_id'] as String);
-        }
-      }
+      final ids = cards.map((c) => c.card.id).toList();
       if (ids.isEmpty) return null;
       final id = _uuid.v4();
       await txn.insert('review_sessions', {
@@ -283,7 +286,7 @@ class LocalReviewRepository implements ReviewRepository {
     required ReviewRating rating,
   }) async {
     final db = await _database.database;
-    return db.transaction((txn) async {
+    final result = await db.transaction((txn) async {
       final existing = await txn.query(
         'review_events',
         where: 'event_id=?',
@@ -360,6 +363,8 @@ class LocalReviewRepository implements ReviewRepository {
       );
       return _load(txn, sessionId);
     });
+    _database.notifyStudyChanged();
+    return result;
   }
 
   @override

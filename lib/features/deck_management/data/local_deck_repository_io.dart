@@ -105,7 +105,7 @@ class LocalDeckRepository implements DeckRepository {
   }) async {
     final name = _title(title);
     final db = await _database.database;
-    return db.transaction((txn) async {
+    final result = await db.transaction((txn) async {
       final rows = await txn.query(
         'decks',
         where: "deck_id=? AND status='active'",
@@ -132,6 +132,8 @@ class LocalDeckRepository implements DeckRepository {
         )).single,
       );
     });
+    _database.notifyStudyChanged();
+    return result;
   }
 
   @override
@@ -152,6 +154,7 @@ class LocalDeckRepository implements DeckRepository {
         whereArgs: [deckId],
       );
     });
+    _database.notifyStudyChanged();
   }
 
   Future<void> _refreshCount(DatabaseExecutor db, String deckId, int now) => db
@@ -182,6 +185,7 @@ class LocalDeckRepository implements DeckRepository {
       );
       await _refreshCount(txn, rows.single['deck_id'] as String, now);
     });
+    _database.notifyStudyChanged();
   }
 
   Map<String, Object?> _contentValues(CardContent content) => {
@@ -213,7 +217,7 @@ class LocalDeckRepository implements DeckRepository {
     final db = await _database.database;
     final now = _clock().toUtc();
     final id = _uuid.v4();
-    return db.transaction((txn) async {
+    final result = await db.transaction((txn) async {
       if ((await txn.query(
         'decks',
         where: "deck_id=? AND status='active'",
@@ -240,6 +244,8 @@ class LocalDeckRepository implements DeckRepository {
         (await txn.query('cards', where: 'card_id=?', whereArgs: [id])).single,
       );
     });
+    _database.notifyStudyChanged();
+    return result;
   }
 
   @override
@@ -249,7 +255,7 @@ class LocalDeckRepository implements DeckRepository {
   }) async {
     content.validate();
     final db = await _database.database;
-    return db.transaction((txn) async {
+    final result = await db.transaction((txn) async {
       final rows = await txn.rawQuery(
         """SELECT c.* FROM cards c JOIN decks d ON d.deck_id=c.deck_id
         WHERE c.card_id=? AND c.status!='deleted' AND d.status='active'""",
@@ -275,6 +281,8 @@ class LocalDeckRepository implements DeckRepository {
         )).single,
       );
     });
+    _database.notifyStudyChanged();
+    return result;
   }
 
   @override
@@ -494,6 +502,7 @@ class LocalDeckRepository implements DeckRepository {
         [deckId, now, deckId],
       );
     });
+    _database.notifyStudyChanged();
   }
 
   @override
