@@ -10,7 +10,7 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 Future<Database> database() async {
   final db = await databaseFactoryFfi.openDatabase(inMemoryDatabasePath);
   await db.execute('PRAGMA foreign_keys = ON');
-  await MemoMindDatabase.createV6(db);
+  await MemoMindDatabase.createV8(db);
   return db;
 }
 
@@ -95,7 +95,7 @@ CardEntity card(
 void main() {
   setUpAll(sqfliteFfiInit);
   test(
-    'v6 persists all types and MCQ answer/payload with source metadata',
+    'current schema persists all types and MCQ answer/payload with source metadata',
     () async {
       final db = await database();
       addTearDown(db.close);

@@ -3,7 +3,6 @@ import 'package:flutter/services.dart';
 
 import '../../deck_management/data/local_deck_repository.dart';
 import '../../deck_management/domain/deck_repository.dart';
-import '../../deck_management/presentation/deck_detail_screen.dart';
 import '../../deck_management/presentation/library_decks_screen.dart';
 import '../../../shared/theme/memo_theme.dart';
 import '../domain/home_dashboard_data.dart';
@@ -50,11 +49,13 @@ class HomeScreen extends StatefulWidget {
     required this.data,
     required this.actions,
     this.libraryRepository,
+    this.onOpenDeckAsync,
   });
 
   final HomeDashboardData data;
   final HomeActions actions;
   final DeckRepository? libraryRepository;
+  final Future<void> Function(String)? onOpenDeckAsync;
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -94,14 +95,9 @@ class _HomeScreenState extends State<HomeScreen> {
             : selectedTab == 1
             ? LibraryDecksScreen(
                 repository: _libraryRepository,
-                onOpenDeck: (deckId) => Navigator.of(context).push<void>(
-                  MaterialPageRoute<void>(
-                    builder: (_) => DeckDetailScreen(
-                      deckId: deckId,
-                      repository: _libraryRepository,
-                    ),
-                  ),
-                ),
+                onOpenDeck: widget.actions.onOpenDeck,
+                onOpenDeckAsync: widget.onOpenDeckAsync,
+                onChanged: widget.actions.onRetryLoad,
               )
             : _TabPlaceholder(index: selectedTab),
       ),
@@ -123,6 +119,7 @@ class _HomeScreenState extends State<HomeScreen> {
         selectedTab: selectedTab,
         onSelect: (index) {
           setState(() => selectedTab = index);
+          if (index == 0) widget.actions.onRetryLoad();
         },
       ),
     );

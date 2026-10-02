@@ -23,7 +23,7 @@ class ConfirmDeleteDialog extends StatelessWidget {
     return AlertDialog(
       title: const Text('Xóa bộ thẻ?'),
       content: Text(
-        '“$deckTitle” sẽ được chuyển vào mục đã xóa, không bị xóa vĩnh viễn.',
+        'Bộ thẻ “$deckTitle” và các thẻ bên trong sẽ được ẩn khỏi thư viện và phiên ôn tập. Lịch sử ôn và nguồn tài liệu được giữ lại.',
       ),
       actions: [
         TextButton(

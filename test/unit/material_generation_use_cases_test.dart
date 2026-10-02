@@ -345,7 +345,7 @@ void main() {
     setUp(() async {
       db = await databaseFactoryFfi.openDatabase(inMemoryDatabasePath);
       await db.execute('PRAGMA foreign_keys = ON');
-      await MemoMindDatabase.createV6(db);
+      await MemoMindDatabase.createV8(db);
       deckRepo = LocalDeckRepository(database: MemoMindDatabase.forTesting(db));
     });
 

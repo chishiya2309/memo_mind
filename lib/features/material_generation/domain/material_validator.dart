@@ -10,7 +10,10 @@ class MaterialValidator {
   static bool isQuoteSupported(String quote, String source) =>
       normalize(quote).isNotEmpty &&
       normalize(source).contains(normalize(quote));
-  static Map<String, String> errors(MaterialDraft card) {
+  static Map<String, String> errors(
+    MaterialDraft card, {
+    bool requireSource = true,
+  }) {
     final errors = <String, String>{};
     void check(String key, String value, int max) {
       if (value.trim().isEmpty || value.length > max) {
@@ -20,8 +23,9 @@ class MaterialValidator {
 
     check('front', card.front, 2000);
     check('back', card.back, 2000);
-    check('sourceQuote', card.sourceQuote, 2000);
-    if (card.sourceBlockId.trim().isEmpty || card.sourcePage < 1) {
+    if (requireSource) check('sourceQuote', card.sourceQuote, 2000);
+    if (requireSource &&
+        (card.sourceBlockId.trim().isEmpty || card.sourcePage < 1)) {
       errors['source'] = 'Thiếu liên kết nguồn hợp lệ.';
     }
     if (card.confidence != null &&

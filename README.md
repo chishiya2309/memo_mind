@@ -7,7 +7,7 @@ MemoMind AI is an Android focused Flutter app for turning lecture documents into
 - Imported pages, confirmed OCR source blocks, decks, and cards are stored in SQLite. Accepted cards retain a document, page, and source block link.
 - OCR runs on the device. Optional crop enhancement sends only the selected JPEG region to the Express API after user consent.
 - The Express API in `functions/` proxies Groq material generation and Gemini OCR enhancement. Provider API keys stay on the server and never ship in Flutter.
-- Offline review uses an SM-2 scheduler. SQLite v7 stores each review event, card schedule, and session progress in one transaction. Cloud sync and cross device replication remain future work.
+- Offline review uses an SM-2 scheduler. SQLite v8 stores each review event, card schedule, and session progress in one transaction. Cloud sync and cross device replication remain future work.
 
 ## Project layout
 
@@ -31,9 +31,9 @@ test/
 
 ## Offline review (UC04–UC05)
 
-On Android, create and save cards through the existing import/OCR/generation flow, then use **Bắt đầu ôn**, **Ôn tự do**, or a deck's review action. Home reads deck and due-card counts from SQLite. An unfinished session exposes **Tiếp tục phiên ôn đang dở**, including when only Again cards remain.
+On Android, create BASIC/CLOZE/MCQ cards directly in a deck or save accepted cards through the import/OCR/generation flow, then use **Bắt đầu ôn**, **Ôn tự do**, or a deck's review action. Home reads deck and due-card counts from SQLite. An unfinished session exposes **Tiếp tục phiên ôn đang dở**, including when only Again cards remain.
 
-- Only active cards are reviewed. Due sessions select `due_date <= session start`; free review ignores the due date.
+- Only valid active cards in active decks are reviewed. Due sessions select `due_date <= session start`; free review ignores the due date.
 - Flip a BASIC, CLOZE, or MCQ card to reveal its answer, then choose Again/Hard/Good/Easy (quality 1/3/4/5).
 - Initial schedule: EF 2.5, repetitions 0, interval 0. Successful intervals are 1 day, 6 days, then the previous interval multiplied by the previous EF, rounded to the nearest integer. EF uses `EF + 0.1 - (5-q) * (0.08 + (5-q) * 0.02)`, with a minimum of 1.3.
 - Again resets repetitions to 0, sets the long-term interval to 1 day, and queues the card for another attempt at the end of the session. Every subsequent rating also updates the schedule and creates an event.
@@ -41,6 +41,16 @@ On Android, create and save cards through the existing import/OCR/generation flo
 - Pause/back preserves the session. Completed ratings and queues survive an app restart. Failed writes do not advance the card; retry reuses the same event ID.
 - Review history is retained if a card is deleted. Deleted/suspended cards are skipped when resuming. One unfinished session is allowed at a time.
 - Review uses no network calls. Web shows an unsupported-platform message because local card storage and OCR are currently Android-focused.
+
+## Deck management and sources (UC10)
+
+Open **Thư viện** to create, rename, tag, search, or delete a deck. In the deck, add a BASIC, CLOZE, or MCQ card, edit its content/tags, search by content/tags, or review it immediately. Editing an existing card preserves its type, source, schedule, and history. Manual cards have no required source and are immediately due with EF 2.5, repetitions 0, and interval 0.
+
+Deck/card deletion is confirmed and soft: deleted items disappear from the library and review queues while review events and shared source files remain. Failed form saves retain the input and allow retry.
+
+**Xem nguồn** from a saved card or review opens the exact stored source page and quote. Highlighting requires a matching block, a valid finite bounding box, and a decoded image in the correct coordinate system. Missing/corrupt sources retain the quote and stored page number.
+
+Schema v8 migrates both the original review-only v7 and the merged v7 variant with deck tags/status; it preserves schedules, events, session queues, and device IDs. Source references are historical, so source loss cannot cascade-delete cards.
 
 ## AI backend setup
 
@@ -75,7 +85,21 @@ Use `quantityMode: "manual"` with `desiredCount` from 1–30 to set a total targ
 
 ## Validation
 
-Run `npm test` from `functions/`, and `flutter analyze` plus `flutter test` from the repository root. These checks use mocked provider responses and do not need actual API keys.
+Run `npm test` from `functions/`, and `flutter analyze` plus `flutter test` from the repository root. These checks use mocked provider responses and do not need actual API keys. Run Flutter tests before APK builds, sequentially: Flutter regenerates plugin registrants differently for tests/debug and release. Keep the default Pub step when changing build modes (avoid --no-pub for the release build after tests/debug).
+
+```sh
+flutter analyze
+flutter test --concurrency=1
+# With an Android device connected, disable its network for the offline check:
+flutter test integration_test/offline_deck_review_test.dart -d DEVICE_ID
+# Restore the device network, then build the normal main app:
+flutter build apk --debug -t lib/main.dart
+flutter build apk --release -t lib/main.dart
+```
+
+The integration test uses an isolated temporary database, checks native SQLite persistence after closing/reopening it, and removes its own fixtures. It does not clear the production database. The current Android release configuration uses the development signing key.
+
+See [UC10 / UC04–UC05 validation](docs/uc10-uc04-validation.md) for requirement coverage and the recorded Android checks.
 
 Do not commit `.env` files, service account keys, or other credentials. This repository has no GitHub remote configured yet.
 

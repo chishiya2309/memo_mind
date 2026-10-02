@@ -17,6 +17,11 @@ abstract class DeckRepository {
     DeckTone? tone,
     List<String>? tags,
   });
+  Future<CardEntity> createManualCard({
+    required String deckId,
+    required CardContent content,
+  });
+  Future<CardEntity> updateCard(String cardId, {required CardContent content});
   Future<void> deleteDeck(String deckId);
   Future<void> deleteCard(String cardId);
   Future<CardSourceTrace> getCardSourceTrace(CardEntity card);
@@ -26,4 +31,3 @@ abstract class DeckRepository {
   });
   Future<List<CardEntity>> getCardsForDeck(String deckId);
 }
-
