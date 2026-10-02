@@ -27,6 +27,8 @@ import '../features/reminders/application/reminder_tap_router.dart';
 import '../features/reminders/data/android_notification_gateway.dart';
 import '../features/reminders/data/local_reminder_settings_repository.dart';
 import '../features/reminders/presentation/profile_settings_screen.dart';
+import '../features/statistics/application/statistics_controller.dart';
+import '../features/statistics/data/local_statistics_repository.dart';
 
 class MemoMindApp extends StatefulWidget {
   const MemoMindApp({super.key});
@@ -37,6 +39,8 @@ class MemoMindApp extends StatefulWidget {
 
 class _MemoMindAppState extends State<MemoMindApp> with WidgetsBindingObserver {
   final _navigator = GlobalKey<NavigatorState>();
+  final _statisticsRoutes = RouteObserver<ModalRoute<void>>();
+  late final StatisticsController _statistics;
   final _dueScreen = GlobalKey<DueCardsScreenState>();
   final _navigatorReady = Completer<void>();
   late final ReminderCoordinator _reminders;
@@ -55,6 +59,11 @@ class _MemoMindAppState extends State<MemoMindApp> with WidgetsBindingObserver {
     _deckRepository = LocalDeckRepository();
     _recovery = _importRepository.recoverInterruptedImports();
     _dashboard = _loadDashboard();
+    _statistics = StatisticsController(
+      repository: LocalStatisticsRepository(),
+      studyChanges: MemoMindDatabase.instance.studyChanges,
+      supported: !kIsWeb && defaultTargetPlatform == TargetPlatform.android,
+    );
     WidgetsBinding.instance.addObserver(this);
     _reminders = ReminderCoordinator(
       repository: LocalReminderSettingsRepository(),
@@ -149,6 +158,7 @@ class _MemoMindAppState extends State<MemoMindApp> with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    _statistics.setResumed(state == AppLifecycleState.resumed);
     if (state == AppLifecycleState.resumed) {
       _initializeReminders();
       _refreshDashboard();
@@ -160,6 +170,7 @@ class _MemoMindAppState extends State<MemoMindApp> with WidgetsBindingObserver {
     WidgetsBinding.instance.removeObserver(this);
     _studyChanges?.cancel();
     _reminders.dispose();
+    _statistics.dispose();
     super.dispose();
   }
 
@@ -193,6 +204,7 @@ class _MemoMindAppState extends State<MemoMindApp> with WidgetsBindingObserver {
   @override
   Widget build(BuildContext context) => MaterialApp(
     navigatorKey: _navigator,
+    navigatorObservers: [_statisticsRoutes],
     title: 'MemoMind',
     debugShowCheckedModeBanner: false,
     locale: const Locale('vi'),
@@ -332,7 +344,6 @@ class _MemoMindAppState extends State<MemoMindApp> with WidgetsBindingObserver {
                 onOpenDeck: openDeck,
                 onStartDeckReview: (id) => openReview(deckId: id),
                 onOpenDocument: (_) => openPlaceholder('Chi tiết tài liệu'),
-                onOpenStatistics: () => openPlaceholder('Thống kê'),
                 onOpenLibrary: openLibrary,
                 onOpenProfile: () => Navigator.of(context).push(
                   MaterialPageRoute<void>(
@@ -359,6 +370,9 @@ class _MemoMindAppState extends State<MemoMindApp> with WidgetsBindingObserver {
               ),
               libraryRepository: _deckRepository,
               profilePage: ProfileSettingsScreen(coordinator: _reminders),
+              statisticsController: _statistics,
+              statisticsRouteObserver: _statisticsRoutes,
+              onOpenDueCards: _openDueCards,
               onOpenDeckAsync: openDeck,
             );
           },
