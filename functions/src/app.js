@@ -52,7 +52,7 @@ async function withinDeadline(work, milliseconds) {
     })]);
   } finally { clearTimeout(timer); }
 }
-function createApp({ providers = createProviders(), deadlineMs = 75000, rateLimit = 10 } = {}) {
+function createApp({ providers = createProviders(), deadlineMs = 75000, rateLimit = 10, backup } = {}) {
   const app = express(); const windows = new Map();
   app.set('trust proxy', 'loopback'); app.use(cors({ origin: true }));
   function limit(req, res, next) {
@@ -68,6 +68,7 @@ function createApp({ providers = createProviders(), deadlineMs = 75000, rateLimi
   }
   const asyncRoute = handler => (req, res, next) => Promise.resolve(handler(req, res)).catch(next);
   app.get(['/health', '/api/health'], (_, res) => res.json({ status: 'ok', service: 'MemoMind AI' }));
+  app.use('/api/v1/backups', require('./backup/router').backupRouter(backup));
   const generate = legacy => asyncRoute(async (req, res) => {
     let body = req.body;
     if (legacy) {

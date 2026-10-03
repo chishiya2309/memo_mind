@@ -19,7 +19,9 @@ import '../features/deck_management/presentation/deck_detail_screen.dart';
 import '../features/deck_management/presentation/library_decks_screen.dart';
 import '../features/deck_management/presentation/widgets/deck_form_dialog.dart';
 import '../shared/theme/memo_theme.dart';
-import '../core/database/memo_mind_database.dart';
+import '../core/workspace/workspace_context.dart';
+import '../features/account_backup/application/account_backup_controller.dart';
+import '../features/account_backup/presentation/account_backup_screen.dart';
 import '../features/review/data/local_due_cards_source.dart';
 import '../features/review/presentation/due_cards_screen.dart';
 import '../features/reminders/application/reminder_coordinator.dart';
@@ -31,7 +33,9 @@ import '../features/statistics/application/statistics_controller.dart';
 import '../features/statistics/data/local_statistics_repository.dart';
 
 class MemoMindApp extends StatefulWidget {
-  const MemoMindApp({super.key});
+  const MemoMindApp({super.key, this.account, this.reopenAccount = false});
+  final AccountBackupController? account;
+  final bool reopenAccount;
 
   @override
   State<MemoMindApp> createState() => _MemoMindAppState();
@@ -61,7 +65,7 @@ class _MemoMindAppState extends State<MemoMindApp> with WidgetsBindingObserver {
     _dashboard = _loadDashboard();
     _statistics = StatisticsController(
       repository: LocalStatisticsRepository(),
-      studyChanges: MemoMindDatabase.instance.studyChanges,
+      studyChanges: WorkspaceRuntime.database.studyChanges,
       supported: !kIsWeb && defaultTargetPlatform == TargetPlatform.android,
     );
     WidgetsBinding.instance.addObserver(this);
@@ -71,10 +75,11 @@ class _MemoMindAppState extends State<MemoMindApp> with WidgetsBindingObserver {
       dueCards: LocalDueCardsSource(),
       timeZone: AndroidNotificationGateway.deviceTimeZone,
     );
+    widget.account?.beforeSwitch = _reminders.shutdown;
     _tapRouter = ReminderTapRouter(
       ready: () async {
         await _recovery;
-        await MemoMindDatabase.instance.database;
+        await WorkspaceRuntime.database.database;
         await _navigatorReady.future;
       },
       open: _openDueCards,
@@ -96,7 +101,7 @@ class _MemoMindAppState extends State<MemoMindApp> with WidgetsBindingObserver {
       },
     );
     if (_reminders.gateway.supported) {
-      _studyChanges = MemoMindDatabase.instance.studyChanges.listen(
+      _studyChanges = WorkspaceRuntime.database.studyChanges.listen(
         (_) => _reminders.reconcile(),
       );
       _initializeReminders();
@@ -105,6 +110,13 @@ class _MemoMindAppState extends State<MemoMindApp> with WidgetsBindingObserver {
     }
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!_navigatorReady.isCompleted) _navigatorReady.complete();
+      if (widget.reopenAccount && widget.account != null) {
+        _navigator.currentState?.push(
+          MaterialPageRoute<void>(
+            builder: (_) => AccountBackupScreen(controller: widget.account!),
+          ),
+        );
+      }
     });
   }
 
@@ -347,8 +359,10 @@ class _MemoMindAppState extends State<MemoMindApp> with WidgetsBindingObserver {
                 onOpenLibrary: openLibrary,
                 onOpenProfile: () => Navigator.of(context).push(
                   MaterialPageRoute<void>(
-                    builder: (_) =>
-                        ProfileSettingsScreen(coordinator: _reminders),
+                    builder: (_) => ProfileSettingsScreen(
+                      coordinator: _reminders,
+                      account: widget.account,
+                    ),
                   ),
                 ),
                 onOpenApprovals: () => openPlaceholder('Duyệt thẻ AI'),
@@ -369,7 +383,10 @@ class _MemoMindAppState extends State<MemoMindApp> with WidgetsBindingObserver {
                 },
               ),
               libraryRepository: _deckRepository,
-              profilePage: ProfileSettingsScreen(coordinator: _reminders),
+              profilePage: ProfileSettingsScreen(
+                coordinator: _reminders,
+                account: widget.account,
+              ),
               statisticsController: _statistics,
               statisticsRouteObserver: _statisticsRoutes,
               onOpenDueCards: _openDueCards,

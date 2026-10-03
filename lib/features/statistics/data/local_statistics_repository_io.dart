@@ -1,3 +1,4 @@
+import '../../../core/workspace/workspace_context.dart';
 import '../../../core/database/memo_mind_database.dart';
 import '../../review/data/local_due_cards_source_io.dart';
 import '../domain/statistics_calculator.dart';
@@ -10,7 +11,7 @@ class LocalStatisticsRepository implements StatisticsRepository {
     MemoMindDatabase? database,
     DateTime Function()? clock,
     Future<String> Function()? timeZone,
-  }) : _database = database ?? MemoMindDatabase.instance,
+  }) : _database = database ?? WorkspaceRuntime.database,
        _clock = clock ?? DateTime.now,
        _timeZone = timeZone ?? deviceStatisticsTimeZone;
 

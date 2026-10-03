@@ -1,3 +1,5 @@
+import '../../../core/workspace/workspace_context.dart';
+
 import 'package:sqflite/sqflite.dart';
 
 import '../../../core/database/memo_mind_database.dart';
@@ -7,7 +9,7 @@ import '../domain/review_models.dart';
 
 class LocalDueCardsSource implements DueCardsSource {
   LocalDueCardsSource({MemoMindDatabase? database})
-    : _database = database ?? MemoMindDatabase.instance;
+    : _database = database ?? WorkspaceRuntime.database;
   final MemoMindDatabase _database;
 
   @override

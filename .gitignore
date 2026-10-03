@@ -73,4 +73,5 @@ ui-debug.log*
 android/local.properties
 *.apk
 *.aab
+config/*.local.json
 

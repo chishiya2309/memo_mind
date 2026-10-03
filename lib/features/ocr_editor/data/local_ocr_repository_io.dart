@@ -1,3 +1,5 @@
+import '../../../core/workspace/workspace_context.dart';
+
 import 'package:sqflite/sqflite.dart';
 import 'package:uuid/uuid.dart';
 
@@ -13,10 +15,10 @@ class LocalOcrRepository implements OcrRepository {
     MemoMindDatabase? database,
     Uuid? uuid,
     DateTime Function()? clock,
-  })  : _documents = documentRepository ?? LocalDocumentImportRepository(),
-        _database = database ?? MemoMindDatabase.instance,
-        _uuid = uuid ?? const Uuid(),
-        _clock = clock ?? DateTime.now;
+  }) : _documents = documentRepository ?? LocalDocumentImportRepository(),
+       _database = database ?? WorkspaceRuntime.database,
+       _uuid = uuid ?? const Uuid(),
+       _clock = clock ?? DateTime.now;
 
   final DocumentImportRepository _documents;
   final MemoMindDatabase _database;
@@ -77,10 +79,7 @@ class LocalOcrRepository implements OcrRepository {
       }
     }
 
-    return OcrDocumentReview(
-      document: document,
-      pageReviews: pageReviews,
-    );
+    return OcrDocumentReview(document: document, pageReviews: pageReviews);
   }
 
   @override
@@ -173,7 +172,9 @@ class LocalOcrRepository implements OcrRepository {
             'box_height': preserved.boundingBox?.height,
             'has_valid_box': preserved.hasValidBox ? 1 : 0,
             'confidence': preserved.confidence,
-            'confidence_source': _confidenceSourceToDb(preserved.confidenceSource),
+            'confidence_source': _confidenceSourceToDb(
+              preserved.confidenceSource,
+            ),
             'status': _blockStatusToDb(preserved.status),
             'created_at': preserved.createdAt.millisecondsSinceEpoch,
             'updated_at': preserved.updatedAt.millisecondsSinceEpoch,
@@ -181,27 +182,20 @@ class LocalOcrRepository implements OcrRepository {
         }
 
         // Upsert ocr_page_results
-        await txn.insert(
-          'ocr_page_results',
-          {
-            'page_id': pageId,
-            'document_id': documentId,
-            'status': 'completed',
-            'recognized_language': language,
-            'raw_full_text': rawFullText,
-            'error_message': null,
-            'updated_at': now,
-          },
-          conflictAlgorithm: ConflictAlgorithm.replace,
-        );
+        await txn.insert('ocr_page_results', {
+          'page_id': pageId,
+          'document_id': documentId,
+          'status': 'completed',
+          'recognized_language': language,
+          'raw_full_text': rawFullText,
+          'error_message': null,
+          'updated_at': now,
+        }, conflictAlgorithm: ConflictAlgorithm.replace);
 
         // Advance document status to pending_ocr_review if currently pending_ocr
         await txn.update(
           'documents',
-          {
-            'status': 'pending_ocr_review',
-            'updated_at': now,
-          },
+          {'status': 'pending_ocr_review', 'updated_at': now},
           where: "document_id = ? AND status IN ('pending_processing', 'pending_ocr')",
           whereArgs: [documentId],
         );
@@ -224,19 +218,15 @@ class LocalOcrRepository implements OcrRepository {
     final db = await _database.database;
     final now = _clock().millisecondsSinceEpoch;
 
-    await db.insert(
-      'ocr_page_results',
-      {
-        'page_id': pageId,
-        'document_id': documentId,
-        'status': 'failed',
-        'recognized_language': null,
-        'raw_full_text': null,
-        'error_message': errorMessage,
-        'updated_at': now,
-      },
-      conflictAlgorithm: ConflictAlgorithm.replace,
-    );
+    await db.insert('ocr_page_results', {
+      'page_id': pageId,
+      'document_id': documentId,
+      'status': 'failed',
+      'recognized_language': null,
+      'raw_full_text': null,
+      'error_message': errorMessage,
+      'updated_at': now,
+    }, conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
   @override
@@ -303,10 +293,7 @@ class LocalOcrRepository implements OcrRepository {
 
     await db.update(
       'source_blocks',
-      {
-        'status': _blockStatusToDb(BlockStatus.deleted),
-        'updated_at': now,
-      },
+      {'status': _blockStatusToDb(BlockStatus.deleted), 'updated_at': now},
       where: 'block_id = ?',
       whereArgs: [blockId],
     );
@@ -350,10 +337,7 @@ class LocalOcrRepository implements OcrRepository {
 
     await db.update(
       'documents',
-      {
-        'status': 'pending_ocr_review',
-        'updated_at': now,
-      },
+      {'status': 'pending_ocr_review', 'updated_at': now},
       where: 'document_id = ?',
       whereArgs: [documentId],
     );
@@ -368,10 +352,7 @@ class LocalOcrRepository implements OcrRepository {
       // Mark all non-deleted blocks of this document as verified
       await txn.update(
         'source_blocks',
-        {
-          'status': _blockStatusToDb(BlockStatus.verified),
-          'updated_at': now,
-        },
+        {'status': _blockStatusToDb(BlockStatus.verified), 'updated_at': now},
         where: "document_id = ? AND status != 'deleted'",
         whereArgs: [documentId],
       );
@@ -379,10 +360,7 @@ class LocalOcrRepository implements OcrRepository {
       // Advance document status to ready_for_generation
       await txn.update(
         'documents',
-        {
-          'status': 'ready_for_generation',
-          'updated_at': now,
-        },
+        {'status': 'ready_for_generation', 'updated_at': now},
         where: 'document_id = ?',
         whereArgs: [documentId],
       );
@@ -390,34 +368,34 @@ class LocalOcrRepository implements OcrRepository {
   }
 
   String _blockStatusToDb(BlockStatus status) => switch (status) {
-        BlockStatus.draft => 'draft',
-        BlockStatus.needsReview => 'needs_review',
-        BlockStatus.verified => 'verified',
-        BlockStatus.userAdded => 'user_added',
-        BlockStatus.deleted => 'deleted',
-      };
+    BlockStatus.draft => 'draft',
+    BlockStatus.needsReview => 'needs_review',
+    BlockStatus.verified => 'verified',
+    BlockStatus.userAdded => 'user_added',
+    BlockStatus.deleted => 'deleted',
+  };
 
   BlockStatus _blockStatusFromDb(String? value) => switch (value) {
-        'needs_review' => BlockStatus.needsReview,
-        'verified' => BlockStatus.verified,
-        'user_added' => BlockStatus.userAdded,
-        'deleted' => BlockStatus.deleted,
-        _ => BlockStatus.draft,
-      };
+    'needs_review' => BlockStatus.needsReview,
+    'verified' => BlockStatus.verified,
+    'user_added' => BlockStatus.userAdded,
+    'deleted' => BlockStatus.deleted,
+    _ => BlockStatus.draft,
+  };
 
   String _confidenceSourceToDb(ConfidenceSource source) => switch (source) {
-        ConfidenceSource.mlkit => 'mlkit',
-        ConfidenceSource.gemini => 'gemini',
-        ConfidenceSource.user => 'user',
-        ConfidenceSource.unavailable => 'unavailable',
-      };
+    ConfidenceSource.mlkit => 'mlkit',
+    ConfidenceSource.gemini => 'gemini',
+    ConfidenceSource.user => 'user',
+    ConfidenceSource.unavailable => 'unavailable',
+  };
 
   ConfidenceSource _confidenceSourceFromDb(String? value) => switch (value) {
-        'mlkit' => ConfidenceSource.mlkit,
-        'gemini' => ConfidenceSource.gemini,
-        'user' => ConfidenceSource.user,
-        _ => ConfidenceSource.unavailable,
-      };
+    'mlkit' => ConfidenceSource.mlkit,
+    'gemini' => ConfidenceSource.gemini,
+    'user' => ConfidenceSource.user,
+    _ => ConfidenceSource.unavailable,
+  };
 
   SourceBlock _mapSourceBlock(Map<String, Object?> row) {
     final left = row['box_left'] as num?;
@@ -446,7 +424,9 @@ class LocalOcrRepository implements OcrRepository {
       boundingBox: box,
       hasValidBox: (row['has_valid_box'] as int? ?? 1) == 1,
       confidence: (row['confidence'] as num?)?.toDouble(),
-      confidenceSource: _confidenceSourceFromDb(row['confidence_source'] as String?),
+      confidenceSource: _confidenceSourceFromDb(
+        row['confidence_source'] as String?,
+      ),
       status: _blockStatusFromDb(row['status'] as String?),
       createdAt: DateTime.fromMillisecondsSinceEpoch(row['created_at'] as int),
       updatedAt: DateTime.fromMillisecondsSinceEpoch(row['updated_at'] as int),
@@ -454,9 +434,9 @@ class LocalOcrRepository implements OcrRepository {
   }
 
   OcrPageStatus _mapPageStatus(String value) => switch (value) {
-        'processing' => OcrPageStatus.processing,
-        'completed' => OcrPageStatus.completed,
-        'failed' => OcrPageStatus.failed,
-        _ => OcrPageStatus.notStarted,
-      };
+    'processing' => OcrPageStatus.processing,
+    'completed' => OcrPageStatus.completed,
+    'failed' => OcrPageStatus.failed,
+    _ => OcrPageStatus.notStarted,
+  };
 }
