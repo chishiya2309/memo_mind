@@ -99,11 +99,12 @@ class SnapshotCodec {
           (!safeFileKey(key) || !key.startsWith('documents/')) ||
           size is! int ||
           size <= 0 ||
-          hash is! String)
+          hash is! String) {
         throw const AccountFailure(
           'invalid_source',
           'Thông tin tệp nguồn không hợp lệ.',
         );
+      }
       refs[key] = {'sizeBytes': size, 'sha256': hash};
     }
 
@@ -124,11 +125,12 @@ class SnapshotCodec {
   }
 
   Future<BackupSnapshot> capture(WorkspaceContext workspace, String uid) async {
-    if (!workspace.active || workspace.record.ownerUid != uid)
+    if (!workspace.active || workspace.record.ownerUid != uid) {
       throw const AccountFailure(
         'wrong_workspace',
         'Kho chưa thuộc tài khoản này.',
       );
+    }
     final backupId = const Uuid().v4();
     final staging = Directory(
       p.join(workspace.record.filesPath, '.backups', backupId),
@@ -152,11 +154,12 @@ class SnapshotCodec {
             (await txn.query('workspace_revision')).single['revision'] as int;
         at = DateTime.now().millisecondsSinceEpoch;
         references = _references(tables);
-        if (references.length > 1000)
+        if (references.length > 1000) {
           throw const AccountFailure(
             'backup_limit',
             'Tối đa 1.000 tệp nguồn mỗi bản.',
           );
+        }
         for (final key in references.keys) {
           final path = p.joinAll([
             workspace.record.filesPath,
@@ -173,11 +176,13 @@ class SnapshotCodec {
         final source = File(
           p.joinAll([workspace.record.filesPath, ...key.split('/')]),
         );
-        if (!await source.exists())
+        if (!await source.exists()) {
           throw AccountFailure('missing_source', 'Thiếu tệp nguồn: $key');
+        }
         expanded += await source.length();
-        if (expanded > maxBackupBytes)
+        if (expanded > maxBackupBytes) {
           throw const AccountFailure('backup_limit', 'Kho vượt 100 MiB.');
+        }
         final copy = File(
           p.joinAll([staging.path, 'files', ...key.split('/')]),
         );
@@ -185,11 +190,12 @@ class SnapshotCodec {
         await source.copy(copy.path);
         final size = await copy.length(), hash = await fileHash(copy);
         if (size != references[key]!['sizeBytes'] ||
-            hash != references[key]!['sha256'])
+            hash != references[key]!['sha256']) {
           throw AccountFailure(
             'corrupt_source',
             'Tệp nguồn hỏng hoặc đã thay đổi: $key',
           );
+        }
         files.add({'fileKey': key, 'sizeBytes': size, 'sha256': hash});
       }
       final dataBytes = utf8.encode(canonicalJson({'tables': tables}));
@@ -216,11 +222,12 @@ class SnapshotCodec {
         'files': files,
       };
       final manifestBytes = utf8.encode(canonicalJson(manifest));
-      if (expanded + dataBytes.length + manifestBytes.length > maxBackupBytes)
+      if (expanded + dataBytes.length + manifestBytes.length > maxBackupBytes) {
         throw const AccountFailure(
           'backup_limit',
           'Dữ liệu giải nén vượt 100 MiB.',
         );
+      }
       final dataFile = File(p.join(staging.path, 'data.json'));
       final manifestFile = File(p.join(staging.path, 'manifest.json'));
       await dataFile.writeAsBytes(dataBytes, flush: true);
@@ -228,8 +235,9 @@ class SnapshotCodec {
       final zip = File(p.join(staging.path, 'snapshot.zip'));
       await _encodeSnapshot(staging.path, zip.path, keys);
       final size = await zip.length();
-      if (size > maxBackupBytes)
+      if (size > maxBackupBytes) {
         throw const AccountFailure('backup_limit', 'Gói ZIP vượt 100 MiB.');
+      }
       return BackupSnapshot({
         ...manifest
           ..remove('files')
@@ -258,14 +266,16 @@ class SnapshotCodec {
     if (expected['ownerUid'] != uid ||
         expected['status'] != 'ready' ||
         expected['schemaVersion'] != 9 ||
-        expected['schedulerVersion'] != 'sm2-v1')
+        expected['schedulerVersion'] != 'sm2-v1') {
       throw const AccountFailure(
         'incompatible_backup',
         'Bản sao không hợp lệ cho tài khoản hoặc phiên bản này.',
       );
+    }
     if (await zip.length() > maxBackupBytes ||
-        await fileHash(zip) != expected['bundleHash'])
+        await fileHash(zip) != expected['bundleHash']) {
       throw const AccountFailure('checksum_mismatch', 'Gói tải xuống hỏng.');
+    }
     final input = InputFileStream(zip.path);
     WorkspaceRecord? record;
     MemoMindDatabase? imported;
@@ -273,19 +283,21 @@ class SnapshotCodec {
       final names = <String>{};
       var expanded = 0;
       final directory = ZipDirectory()..read(input);
-      if (directory.fileHeaders.length > 1002)
+      if (directory.fileHeaders.length > 1002) {
         throw const AccountFailure('backup_limit', 'Quá nhiều tệp.');
+      }
       for (final header in directory.fileHeaders) {
         expanded += header.uncompressedSize;
         if (!names.add(header.filename) ||
             !safeFileKey(header.filename) ||
             (header.generalPurposeBitFlag & 1) != 0 ||
             ((header.externalFileAttributes >> 16) & 0xf000) == 0xa000 ||
-            expanded > maxBackupBytes)
+            expanded > maxBackupBytes) {
           throw const AccountFailure(
             'invalid_archive',
             'ZIP có mục trùng, liên kết hoặc dung lượng không hợp lệ.',
           );
+        }
       }
       input.setPosition(0);
       final archive = ZipDecoder().decodeStream(input);
@@ -295,22 +307,25 @@ class SnapshotCodec {
         if (!safeFileKey(entry.name) ||
             !entry.isFile ||
             entry.isSymbolicLink ||
-            expanded > maxBackupBytes)
+            expanded > maxBackupBytes) {
           throw const AccountFailure(
             'invalid_archive',
             'ZIP chứa đường dẫn hoặc dung lượng không hợp lệ.',
           );
+        }
       }
       final manifestEntry = archive.find('manifest.json'),
           dataEntry = archive.find('data.json');
-      if (manifestEntry == null || dataEntry == null)
+      if (manifestEntry == null || dataEntry == null) {
         throw const AccountFailure(
           'invalid_archive',
           'Thiếu dữ liệu hoặc manifest.',
         );
+      }
       final manifestBytes = manifestEntry.content;
-      if (contentHash(manifestBytes) != expected['manifestHash'])
+      if (contentHash(manifestBytes) != expected['manifestHash']) {
         throw const AccountFailure('checksum_mismatch', 'Manifest hỏng.');
+      }
       final manifest =
           jsonDecode(utf8.decode(manifestBytes)) as Map<String, dynamic>;
       for (final key in [
@@ -323,27 +338,31 @@ class SnapshotCodec {
         'snapshotAt',
         'fingerprint',
       ]) {
-        if (manifest[key] != expected[key])
+        if (manifest[key] != expected[key]) {
           throw const AccountFailure(
             'invalid_manifest',
             'Manifest không khớp bản sao.',
           );
+        }
       }
       final dataBytes = dataEntry.content;
-      if (contentHash(dataBytes) != manifest['dataHash'])
+      if (contentHash(dataBytes) != manifest['dataHash']) {
         throw const AccountFailure('checksum_mismatch', 'Dữ liệu hỏng.');
+      }
       final data = jsonDecode(utf8.decode(dataBytes)) as Map<String, dynamic>;
       final rawTables = Map<String, dynamic>.from(data['tables'] as Map);
       if (rawTables.length != MemoMindDatabase.studyTables.length ||
-          MemoMindDatabase.studyTables.any((t) => rawTables[t] is! List))
+          MemoMindDatabase.studyTables.any((t) => rawTables[t] is! List)) {
         throw const AccountFailure(
           'invalid_data',
           'Bảng dữ liệu không hợp lệ.',
         );
+      }
       final files = (manifest['files'] as List).cast<Map<String, dynamic>>();
       if (archive.length != files.length + 2 ||
-          files.length != expected['fileCount'])
+          files.length != expected['fileCount']) {
         throw const AccountFailure('missing_source', 'Số tệp không khớp.');
+      }
       if (contentHash(
             utf8.encode(
               canonicalJson({
@@ -354,11 +373,12 @@ class SnapshotCodec {
               }),
             ),
           ) !=
-          expected['fingerprint'])
+          expected['fingerprint']) {
         throw const AccountFailure(
           'checksum_mismatch',
           'Dấu vân tay không khớp.',
         );
+      }
       record = await workspaces.create(
         uid,
         name:
@@ -372,8 +392,9 @@ class SnapshotCodec {
         if ((!safeFileKey(key) || !key.startsWith('documents/')) ||
             !fileKeys.add(key) ||
             entry == null ||
-            entry.size != file['sizeBytes'])
+            entry.size != file['sizeBytes']) {
           throw const AccountFailure('missing_source', 'Thiếu tệp nguồn.');
+        }
         final destination = File(
           p.joinAll([record.filesPath, ...key.split('/')]),
         );
@@ -384,8 +405,9 @@ class SnapshotCodec {
         } finally {
           await output.close();
         }
-        if (await fileHash(destination) != file['sha256'])
+        if (await fileHash(destination) != file['sha256']) {
           throw const AccountFailure('checksum_mismatch', 'Tệp nguồn hỏng.');
+        }
       }
       final tables = {
         for (final t in MemoMindDatabase.studyTables)
@@ -400,11 +422,12 @@ class SnapshotCodec {
             !fileKeys.contains(r.key) ||
             manifestFiles[r.key]!['sizeBytes'] != r.value['sizeBytes'] ||
             manifestFiles[r.key]!['sha256'] != r.value['sha256'],
-      ))
+      )) {
         throw const AccountFailure(
           'missing_source',
           'Tệp tham chiếu không khớp metadata.',
         );
+      }
       imported = MemoMindDatabase.atPath(record.databasePath);
       final db = await imported.database;
       await db.transaction((txn) async {
@@ -413,8 +436,9 @@ class SnapshotCodec {
             await txn.insert(table, row);
           }
         }
-        if ((await txn.rawQuery('PRAGMA foreign_key_check')).isNotEmpty)
+        if ((await txn.rawQuery('PRAGMA foreign_key_check')).isNotEmpty) {
           throw const AccountFailure('invalid_data', 'Quan hệ dữ liệu hỏng.');
+        }
         await txn.update('decks', {'card_count': 0});
         await txn.execute(
           "UPDATE decks SET card_count=(SELECT COUNT(*) FROM cards WHERE cards.deck_id=decks.deck_id AND cards.status!='deleted')",

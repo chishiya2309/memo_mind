@@ -57,24 +57,26 @@ function backupRouter(injected) {
     });
     if (job.status === 'ready') return res.json({ backup: job });
     const objectKeys = keys(job);
+    const signal = AbortSignal.timeout(dependencies.timeoutMs || limits.timeoutMs);
     try {
-      const ready = await dependencies.objects.head(objectKeys.ready);
+      const ready = await dependencies.objects.head(objectKeys.ready, { signal });
       const source = ready ? objectKeys.ready : objectKeys.staging;
-      const head = ready || await dependencies.objects.head(source);
+      const head = ready || await dependencies.objects.head(source, { signal });
       if (!head || head.ContentLength !== job.sizeBytes) fail('incomplete_backup', 'Chưa tải đủ gói dữ liệu.', 409);
-      const counts = await inspectArchive(await dependencies.objects.read(source), job);
-      if (!ready) await dependencies.objects.promote(source, objectKeys.ready);
-      const acknowledged = await dependencies.objects.head(objectKeys.ready);
-      if (!acknowledged || acknowledged.ContentLength !== job.sizeBytes) fail('incomplete_backup', 'Chưa xác nhận được tệp hoàn tất.', 409);
+      const counts = await inspectArchive(await dependencies.objects.read(source, { signal }), job, { signal });
+      if (!ready) await dependencies.objects.promote(source, objectKeys.ready, { signal });
+      const acknowledged = await dependencies.objects.head(objectKeys.ready, { signal });
+      if (!acknowledged || acknowledged.ContentLength !== job.sizeBytes || acknowledged.ChecksumSHA256 !== Buffer.from(job.bundleHash, 'hex').toString('base64')) fail('incomplete_backup', 'Chưa xác nhận được tệp hoàn tất.', 409);
       const completed = await dependencies.metadata.change(req.uid, job.backupId, job.workspaceId, (j, w) => {
         if (j.status === 'ready') return { value: j };
-        if (j.lease !== lease || w.pendingId !== j.backupId) fail('backup_conflict', 'Tác vụ đã thay đổi.', 409);
+        if (j.status !== 'verifying' || j.lease !== lease || w.pendingId !== j.backupId) fail('backup_conflict', 'Tác vụ đã thay đổi.', 409);
         const next = { ...j, ...counts, status: 'ready', objectKey: objectKeys.ready, completedAt: Date.now(), leaseUntil: 0, lastError: null };
         return { job: next, workspace: { ...w, pendingId: null, readyCount: w.readyCount + 1, lastFingerprint: j.fingerprint, lastReadyId: j.backupId }, value: next };
       });
       res.json({ backup: completed });
     } catch (e) {
-      await dependencies.metadata.change(req.uid, job.backupId, job.workspaceId, j => j?.lease === lease && j.status !== 'ready' ? { job: { ...j, leaseUntil: 0, status: 'uploading', lastError: e.code || 'backup_failed' } } : {});
+      if (signal.aborted) e = new ApiError(504, 'backup_timeout', 'Kiểm tra bản sao quá thời gian chờ 10 phút.');
+      await dependencies.metadata.change(req.uid, job.backupId, job.workspaceId, j => j?.lease === lease && j.status === 'verifying' ? { job: { ...j, leaseUntil: 0, status: 'uploading', lastError: e.code || 'backup_failed' } } : {});
       throw e instanceof ApiError ? e : new ApiError(503, 'backup_unavailable', 'Dịch vụ sao lưu chưa xác nhận kết quả. Hãy đối chiếu và thử lại.');
     }
   }));

@@ -104,8 +104,9 @@ class FirebaseAuthRepository implements AuthRepository {
   @override
   Future<String> token({bool refresh = false}) => _call(() async {
     final value = await auth.currentUser?.getIdToken(refresh);
-    if (value == null)
+    if (value == null) {
       throw const AccountFailure('reauth_required', 'Cần đăng nhập lại.');
+    }
     return value;
   });
   @override
@@ -140,8 +141,9 @@ class FirebaseAuthRepository implements AuthRepository {
     final credential = password == null
         ? await _googleCredential()
         : EmailAuthProvider.credential(email: user.email!, password: password);
-    if (credential == null)
+    if (credential == null) {
       throw const AccountFailure('cancelled', 'Đã hủy xác thực lại.');
+    }
     await user.reauthenticateWithCredential(credential);
   });
 }

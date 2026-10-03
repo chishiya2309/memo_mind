@@ -27,7 +27,7 @@ function validateRequest(body, uid) {
   return Object.fromEntries(fields.map(k => [k, body[k]]));
 }
 
-async function inspectArchive(stream, expected) {
+async function inspectArchive(stream, expected, { signal } = {}) {
   const directory = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'memomind-backup-'));
   const filename = path.join(directory, 'snapshot.zip');
   let actualBytes = 0;
@@ -38,13 +38,19 @@ async function inspectArchive(stream, expected) {
       actualBytes += chunk.length;
       if (actualBytes > limits.maxBytes) return cb(new ApiError(413, 'backup_limit', 'Gói quá lớn.'));
       digest.update(chunk); cb(null, chunk);
-    }}), fs.createWriteStream(filename));
+    }}), fs.createWriteStream(filename), { signal });
     if (actualBytes !== expected.sizeBytes || digest.digest('hex') !== expected.bundleHash) fail('checksum_mismatch', 'Checksum gói không khớp.');
-    const zip = await new Promise((resolve, reject) => yauzl.open(filename, { lazyEntries: true, validateEntrySizes: true }, (e, z) => e ? reject(e) : resolve(z)));
+    const zip = await new Promise((resolve, reject) => yauzl.open(filename, { lazyEntries: true, validateEntrySizes: true }, (e, z) => e ? reject(new ApiError(400, 'invalid_archive', 'Gói ZIP không hợp lệ.')) : resolve(z)));
     const entries = new Map();
     let expanded = 0;
     await new Promise((resolve, reject) => {
-      const rejectAndClose = e => { zip.close(); reject(e); };
+      const rejectAndClose = e => { zip.close(); reject(e instanceof ApiError ? e : new ApiError(400, 'invalid_archive', 'Gói ZIP không hợp lệ.')); };
+      const abort = () => rejectAndClose(new ApiError(504, 'backup_timeout', 'Kiểm tra ZIP quá thời gian chờ.'));
+      if (signal) {
+        signal.addEventListener('abort', abort, { once: true });
+        zip.once('close', () => signal.removeEventListener('abort', abort));
+        if (signal.aborted) return abort();
+      }
       zip.on('error', rejectAndClose);
       zip.on('end', resolve);
       zip.on('entry', entry => {
@@ -71,6 +77,7 @@ async function inspectArchive(stream, expected) {
     if (!manifestEntry || !dataEntry || manifestEntry.sha256 !== expected.manifestHash) fail('invalid_manifest', 'Thiếu manifest hoặc checksum không khớp.');
     let manifest, data;
     try { manifest = JSON.parse(manifestEntry.bytes); data = JSON.parse(dataEntry.bytes); } catch { fail('invalid_archive', 'JSON không hợp lệ.'); }
+    if (!manifest || typeof manifest !== 'object' || !data || typeof data !== 'object') fail('invalid_archive', 'JSON không hợp lệ.');
     for (const key of ['ownerUid', 'backupId', 'workspaceId', 'schemaVersion', 'schedulerVersion', 'snapshotRevision', 'snapshotAt', 'fingerprint']) if (manifest[key] !== expected[key]) fail('invalid_manifest', 'Manifest không thuộc bản sao đã đăng ký.');
     if (manifest.dataHash !== dataEntry.sha256 || !Array.isArray(manifest.files) || manifest.files.length !== expected.fileCount || entries.size !== manifest.files.length + 2) fail('invalid_manifest', 'Phạm vi tệp không khớp.');
     const keys = new Set();
@@ -79,7 +86,7 @@ async function inspectArchive(stream, expected) {
       if (!safeKey(file.fileKey) || !file.fileKey.startsWith('documents/') || keys.has(file.fileKey) || !actual || actual.sizeBytes !== file.sizeBytes || actual.sha256 !== file.sha256) fail('checksum_mismatch', 'Tệp nguồn thiếu hoặc hỏng.');
       keys.add(file.fileKey);
     }
-    if (!data.tables || Object.keys(data.tables).sort().join() !== [...tables].sort().join() || tables.some(t => !Array.isArray(data.tables[t]))) fail('invalid_data', 'Bảng dữ liệu không hợp lệ.');
+    if (!data.tables || Object.keys(data.tables).sort().join() !== [...tables].sort().join() || tables.some(t => !Array.isArray(data.tables[t]) || data.tables[t].some(row => !row || typeof row !== 'object' || Array.isArray(row)))) fail('invalid_data', 'Bảng dữ liệu không hợp lệ.');
     const fingerprint = hash(canonical({ schemaVersion: 9, schedulerVersion: 'sm2-v1', dataHash: dataEntry.sha256, files: manifest.files }));
     if (fingerprint !== expected.fingerprint) fail('checksum_mismatch', 'Dấu vân tay nội dung không khớp.');
     const fileMap = new Map(manifest.files.map(f => [f.fileKey, f]));

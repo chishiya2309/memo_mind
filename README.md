@@ -7,7 +7,7 @@ MemoMind AI is an Android focused Flutter app for turning lecture documents into
 - Imported pages, confirmed OCR source blocks, decks, and cards are stored in SQLite. Accepted cards retain a document, page, and source block link.
 - OCR runs on the device. Optional crop enhancement sends only the selected JPEG region to the Express API after user consent.
 - The Express API in `functions/` proxies Groq material generation and Gemini OCR enhancement. Provider API keys stay on the server and never ship in Flutter.
-- Offline review uses an SM-2 scheduler. SQLite v8 stores each review event, card schedule, and session progress in one transaction. Cloud sync and cross device replication remain future work.
+- Offline review uses an SM-2 scheduler. SQLite v9 adds transactional workspace revisions; each account has an isolated database and source directory. FR18 provides manual backups with Firebase Authentication, Express, Firestore metadata and private Amazon S3 archives. Automatic sync and merging remain outside FR18.
 
 ## Project layout
 
@@ -68,7 +68,7 @@ Schema v8 migrates both the original review-only v7 and the merged v7 variant wi
 
 ## AI backend setup
 
-1. Install the Flutter SDK and Node.js 18 or newer.
+1. Install the Flutter SDK and Node.js 22 or newer.
 2. In `functions/`, run `npm ci`.
 3. Copy `functions/.env.example` to `functions/.env` and set the server secrets `GROQ_API_KEY` and `GEMINI_API_KEY`. Keep both keys off mobile builds and out of source control.
 4. Run `npm start` from `functions/`.
@@ -118,3 +118,11 @@ See [UC10 / UC04–UC05 validation](docs/uc10-uc04-validation.md) for requiremen
 Do not commit `.env` files, service account keys, or other credentials. This repository has no GitHub remote configured yet.
 
 Be Vietnam Pro font files are bundled for offline use. Its license is in `licenses/BeVietnamPro-OFL.txt`.
+
+## Account and manual backups (FR18)
+
+Open **Cá nhân → Cài đặt → Tài khoản và sao lưu**. Firebase Auth supports Google/email, verification, password reset and provider linking. Guest attachment requires a verified account and explicit consent. Logout keeps private workspaces locally and opens a guest workspace. Restoring a verified ready archive creates another workspace and requires confirmation before switching.
+
+Express issues checksum-bound S3 URLs, verifies the complete archive, and commits ready metadata through Firestore transactions. Retry keeps the same frozen snapshot and backup ID. No automatic synchronization or workspace merge is performed.
+
+See [Firebase/S3 setup](docs/deployment/fr18-setup.md) and [FR18 validation](docs/fr18-validation.md). Cloud backup has no default backend URL: configure `config/fr18.local.json` and use `--dart-define-from-file`. Server credentials never belong in this file or an APK.

@@ -86,15 +86,15 @@ class AccountBackupController extends ChangeNotifier {
       !busy;
 
   Future<void> select(WorkspaceRecord record) async {
-    if (record.ownerUid != null && record.ownerUid != account?.uid)
+    if (record.ownerUid != null && record.ownerUid != account?.uid) {
       throw const AccountFailure(
         'wrong_workspace',
         'Kho thuộc tài khoản khác.',
       );
+    }
     api.cancelTransfers();
+    await workspaces.select(record, beforeRevoke: beforeSwitch);
     await _studyChanges?.cancel();
-    await beforeSwitch?.call();
-    await workspaces.select(record);
     backups = [];
     stale = false;
     cloudLoading = false;
@@ -107,10 +107,37 @@ class AccountBackupController extends ChangeNotifier {
     final uid = account!.uid;
     final old = workspace.record;
     if (attachGuest && old.ownerUid == null) {
-      final owned = await workspaces.attach(old.id, uid);
-      await select(owned);
+      await attachGuestWorkspace(old.id, uid);
+    } else if (account?.emailVerified != true && old.ownerUid == null) {
+      _publish();
     } else {
       await select(await workspaces.preferred(uid));
+    }
+  }
+
+  Future<void> attachGuestWorkspace(String id, String uid) async {
+    if (account?.uid != uid || account?.emailVerified != true) {
+      throw const AccountFailure(
+        'email_unverified',
+        'Xác minh email trước khi gắn kho với tài khoản.',
+      );
+    }
+    final guest = await workspaces.get(id);
+    final owned = await workspaces.attach(id, uid);
+    try {
+      await select(owned);
+    } catch (_) {
+      // Publication failed: retain the guest ownership visible before consent.
+      if (workspaces.current?.record.id == guest.id &&
+          workspaces.current?.record.ownerUid == null) {
+        await workspaces.registry.update(
+          'workspaces',
+          {'owner_uid': null},
+          where: 'workspace_id=? AND owner_uid=?',
+          whereArgs: [id, uid],
+        );
+      }
+      rethrow;
     }
   }
 
@@ -146,6 +173,24 @@ class AccountBackupController extends ChangeNotifier {
       'workspace_id': job['workspaceId'],
       'payload': jsonEncode(job),
     }, conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  Future<void> _cleanSnapshot(Map<String, dynamic> job) async {
+    // Only remove the generated directory belonging to this local job.
+    try {
+      final record = await workspaces.get(job['workspaceId'] as String);
+      final root = p.normalize(
+        p.absolute(p.join(record.filesPath, '.backups')),
+      );
+      final folder = p.normalize(p.absolute(p.dirname(job['path'] as String)));
+      if (p.dirname(folder) != root || p.basename(folder) != job['backupId']) {
+        return;
+      }
+      final directory = Directory(folder);
+      if (await directory.exists()) await directory.delete(recursive: true);
+    } catch (_) {
+      // A cleanup error cannot undo cloud confirmation. Retry on reconciliation.
+    }
   }
 
   bool _visible(WorkspaceContext source, String uid) =>
@@ -188,9 +233,10 @@ class AccountBackupController extends ChangeNotifier {
           where: 'key=?',
           whereArgs: ['fr18.metadata.$uid'],
         );
-        if (cached.isNotEmpty)
+        if (cached.isNotEmpty) {
           backups = (jsonDecode(cached.single['value'] as String) as List)
               .cast<Map<String, dynamic>>();
+        }
         stale = true;
         message = error is AccountFailure
             ? error.message
@@ -220,6 +266,7 @@ class AccountBackupController extends ChangeNotifier {
           job['status'] = 'ready';
           job['completedAt'] = cloud['completedAt'];
           await _save(job);
+          await _cleanSnapshot(job);
         }
       } on AccountFailure catch (error) {
         if (error.code != 'backup_not_found') rethrow;
@@ -234,11 +281,12 @@ class AccountBackupController extends ChangeNotifier {
   }
 
   Future<void> backup({bool retry = false}) async {
-    if (!canBackup)
+    if (!canBackup) {
       throw const AccountFailure(
         'backup_unavailable',
         'Xác minh email và chọn kho của tài khoản trước khi sao lưu.',
       );
+    }
     final source = workspace, uid = account!.uid;
     if (!_inFlight.add(source.record.id)) return;
     Map<String, dynamic>? job;
@@ -257,14 +305,16 @@ class AccountBackupController extends ChangeNotifier {
         final prior = await api
             .request('GET', '/${job['backupId']}', uid: uid)
             .catchError((Object e) {
-              if (e is AccountFailure && e.code == 'backup_not_found')
+              if (e is AccountFailure && e.code == 'backup_not_found') {
                 return <String, dynamic>{};
+              }
               throw e;
             });
         if ((prior['backup'] as Map?)?['status'] == 'ready') {
           job['status'] = 'ready';
           job['completedAt'] = (prior['backup'] as Map)['completedAt'];
           await _save(job);
+          await _cleanSnapshot(job);
           _state(source, uid, 'Đã đối chiếu: sao lưu thành công');
           return;
         }
@@ -289,11 +339,12 @@ class AccountBackupController extends ChangeNotifier {
       }
       job['retryCount'] = (job['retryCount'] as int) + 1;
       await _save(job);
-      if (account?.uid != uid || !source.active)
+      if (account?.uid != uid || !source.active) {
         throw const AccountFailure(
           'reauth_required',
           'Tài khoản hoặc kho đã thay đổi.',
         );
+      }
       final response = await api.request('POST', '', uid: uid, body: job);
       var cloud = response['backup'] as Map<String, dynamic>;
       if (cloud['status'] != 'ready') {
@@ -312,15 +363,17 @@ class AccountBackupController extends ChangeNotifier {
                 ))['backup']
                 as Map<String, dynamic>;
       }
-      if (cloud['status'] != 'ready')
+      if (cloud['status'] != 'ready') {
         throw const AccountFailure(
           'unconfirmed',
           'Chưa xác nhận bản sao hoàn tất.',
         );
+      }
       job['status'] = 'ready';
       job['completedAt'] = cloud['completedAt'];
       job['cloudBackupId'] = cloud['backupId'];
       await _save(job);
+      await _cleanSnapshot(job);
       if (_visible(source, uid)) {
         status = await hasChanges()
             ? 'Sao lưu thành công. Có dữ liệu mới chưa sao lưu'
@@ -367,6 +420,7 @@ class AccountBackupController extends ChangeNotifier {
 
   Future<WorkspaceRecord> restore(Map<String, dynamic> backup) async {
     final uid = account!.uid;
+    final generation = workspace.generation;
     final response = await api.request(
       'POST',
       '/${backup['backupId']}/download-url',
@@ -383,14 +437,21 @@ class AccountBackupController extends ChangeNotifier {
     final file = File(p.join(root.path, 'snapshot.zip'));
     try {
       await api.download(response['url'] as String, file);
-      if (account?.uid != uid)
+      if (account?.uid != uid) {
         throw const AccountFailure('reauth_required', 'Tài khoản đã thay đổi.');
+      }
       final record = await codec.restore(
         file,
         response['backup'] as Map<String, dynamic>,
         uid,
         workspaces,
       );
+      if (account?.uid != uid || workspace.generation != generation) {
+        throw const AccountFailure(
+          'reauth_required',
+          'Tài khoản hoặc kho đã thay đổi; kho khôi phục được giữ riêng cho UID gốc.',
+        );
+      }
       return record;
     } finally {
       if (await root.exists()) await root.delete(recursive: true);

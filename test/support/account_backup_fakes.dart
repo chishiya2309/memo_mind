@@ -51,13 +51,14 @@ class FakeAccountAuth implements AuthRepository {
 
   @override
   Future<void> sendVerification() async {
-    if (verificationFails)
+    if (verificationFails) {
       throw const AccountFailure('too-many-requests', 'Chưa gửi được email');
+    }
   }
 
   @override
   Future<void> refresh() async {
-    if (current != null)
+    if (current != null) {
       change(
         AccountIdentity(
           uid: current!.uid,
@@ -66,6 +67,7 @@ class FakeAccountAuth implements AuthRepository {
           providers: current!.providers,
         ),
       );
+    }
   }
 
   @override
@@ -90,6 +92,11 @@ class FakeBackupApi extends BackupApiClient {
   Completer<void>? holdUpload;
   Completer<void>? holdFinalize;
   int begins = 0, finalizes = 0;
+  String jobStatus = 'uploading';
+  bool failNextUpload = false;
+  bool loseNextFinalizeResponse = false;
+  File? downloadArchive;
+  AccountFailure? listFailure;
   @override
   Future<Map<String, dynamic>> request(
     String method,
@@ -97,10 +104,32 @@ class FakeBackupApi extends BackupApiClient {
     Map<String, Object?>? body,
     required String uid,
   }) async {
-    if (auth.current?.uid != uid)
+    if (auth.current?.uid != uid) {
       throw const AccountFailure('reauth_required', 'Account changed');
-    if (method == 'GET' && suffix.isEmpty)
-      return {'backups': <Map<String, dynamic>>[]};
+    }
+    final cloud = registered == null
+        ? null
+        : {
+            ...registered!,
+            'status': jobStatus,
+            'completedAt': jobStatus == 'ready' ? 300 : null,
+          };
+    if (method == 'GET' && suffix.isEmpty) {
+      if (listFailure != null) {
+        throw listFailure!;
+      }
+      return {
+        'backups': <Map<String, dynamic>>[
+          if (cloud != null && jobStatus == 'ready') cloud,
+        ],
+      };
+    }
+    if (method == 'POST' && suffix.endsWith('/download-url')) {
+      return {'backup': cloud!, 'url': 'https://s3.example/fixture'};
+    }
+    if (method == 'GET' && cloud != null && suffix == '/${cloud['backupId']}') {
+      return {'backup': cloud};
+    }
     if (method == 'POST' && suffix.isEmpty) {
       begins++;
       registered = {...body!};
@@ -112,6 +141,11 @@ class FakeBackupApi extends BackupApiClient {
     if (suffix.endsWith('/finalize')) {
       finalizes++;
       await holdFinalize?.future;
+      jobStatus = 'ready';
+      if (loseNextFinalizeResponse) {
+        loseNextFinalizeResponse = false;
+        throw const AccountFailure('unconfirmed', 'Lost response');
+      }
       return {
         'backup': {...registered!, 'status': 'ready', 'completedAt': 300},
       };
@@ -125,9 +159,20 @@ class FakeBackupApi extends BackupApiClient {
     Map<String, dynamic> upload,
     void Function(double) progress,
   ) async {
-    if (!uploading.isCompleted) uploading.complete();
+    if (!uploading.isCompleted) {
+      uploading.complete();
+    }
     progress(0.5);
+    if (failNextUpload) {
+      failNextUpload = false;
+      throw const AccountFailure('waiting_network', 'Network unavailable');
+    }
     await holdUpload?.future;
     progress(1);
+  }
+
+  @override
+  Future<void> download(String url, File destination) async {
+    await downloadArchive!.copy(destination.path);
   }
 }

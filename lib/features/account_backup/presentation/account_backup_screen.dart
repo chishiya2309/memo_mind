@@ -48,12 +48,13 @@ class _AccountBackupScreenState extends State<AccountBackupScreen> {
     try {
       await action();
     } catch (error) {
-      if (mounted)
+      if (mounted) {
         _notice(
           error is AccountFailure
               ? error.message
               : 'Không thể thực hiện thao tác. Dữ liệu cục bộ được giữ.',
         );
+      }
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -85,7 +86,10 @@ class _AccountBackupScreenState extends State<AccountBackupScreen> {
     final owned = (await c.workspaces.available(account.uid))
         .where((w) => w.ownerUid == account.uid);
     var attach = false;
-    if (mounted && c.workspace.record.ownerUid == null && owned.isEmpty) {
+    if (mounted &&
+        account.emailVerified &&
+        c.workspace.record.ownerUid == null &&
+        owned.isEmpty) {
       final estimate = await c.codec.estimate(c.workspace);
       if (!mounted) return;
       attach = await _ask(
@@ -111,8 +115,10 @@ class _AccountBackupScreenState extends State<AccountBackupScreen> {
     } else {
       await c.auth.signInEmail(_email.text, _password.text);
     }
-    _password.clear();
-    _confirm.clear();
+    if (mounted) {
+      _password.clear();
+      _confirm.clear();
+    }
     await _afterLogin();
   });
   Future<void> _backup() async {
@@ -122,8 +128,9 @@ class _AccountBackupScreenState extends State<AccountBackupScreen> {
       'Sao lưu toàn kho riêng tư',
       '${estimate.decks} deck · ${estimate.cards} card\n${estimate.files} tệp · khoảng ${(estimate.bytes / 1048576).toStringAsFixed(1)} MiB\nDữ liệu đã lưu và ảnh/PDF sẽ được tải lên S3. Bạn có thể rời màn hình để tiếp tục học.\nGiới hạn: 100 MiB, 1.000 tệp, 5 bản mỗi kho, thời gian chờ 10 phút.',
       'Sao lưu',
-    ))
+    )) {
       await c.backup();
+    }
   }
 
   Future<void> _signOut() => _run(() async {
@@ -227,8 +234,9 @@ class _AccountBackupScreenState extends State<AccountBackupScreen> {
           ),
           FilledButton(
             onPressed: () {
-              if (key.currentState!.validate())
+              if (key.currentState!.validate()) {
                 Navigator.pop(context, (email.text, password.text));
+              }
             },
             child: const Text('Tiếp tục'),
           ),
@@ -249,7 +257,7 @@ class _AccountBackupScreenState extends State<AccountBackupScreen> {
     animation: c,
     builder: (context, _) {
       final account = c.account;
-      if (!c.accessAllowed)
+      if (!c.accessAllowed) {
         return Scaffold(
           appBar: AppBar(title: const Text('Tài khoản và sao lưu')),
           body: ListView(
@@ -277,6 +285,7 @@ class _AccountBackupScreenState extends State<AccountBackupScreen> {
             ],
           ),
         );
+      }
       return Scaffold(
         appBar: AppBar(title: const Text('Tài khoản và sao lưu')),
         body: ListView(
@@ -351,10 +360,11 @@ class _AccountBackupScreenState extends State<AccountBackupScreen> {
                           return;
                         }
                         await c.auth.resetPassword(_email.text);
-                        if (mounted)
+                        if (mounted) {
                           _notice(
                             'Nếu email phù hợp với một tài khoản, bạn sẽ nhận được hướng dẫn đặt lại mật khẩu',
                           );
+                        }
                       }),
                 child: const Text('Quên mật khẩu'),
               ),
@@ -372,6 +382,7 @@ class _AccountBackupScreenState extends State<AccountBackupScreen> {
                     ? 'Đã xác minh email'
                     : 'Xác minh email để sao lưu',
               ),
+              if (c.message != null) Text(c.message!),
               if (!account.emailVerified) ...[
                 TextButton(
                   onPressed: _busy ? null : () => _run(c.auth.sendVerification),
@@ -382,6 +393,9 @@ class _AccountBackupScreenState extends State<AccountBackupScreen> {
                       ? null
                       : () => _run(() async {
                           await c.auth.refresh();
+                          if (c.account?.emailVerified == true) {
+                            await _afterLogin();
+                          }
                           await c.refreshCloud();
                         }),
                   child: const Text('Tôi đã xác minh'),
@@ -392,6 +406,7 @@ class _AccountBackupScreenState extends State<AccountBackupScreen> {
                 '${c.workspace.record.name} · ${c.workspace.record.ownerUid == null ? 'Kho khách chưa gắn' : 'Kho tài khoản'}',
               ),
               FutureBuilder(
+                key: ValueKey(c.workspace.generation),
                 future: c.codec.estimate(c.workspace),
                 builder: (context, snapshot) => Text(
                   snapshot.hasData
@@ -400,10 +415,17 @@ class _AccountBackupScreenState extends State<AccountBackupScreen> {
                 ),
               ),
               FutureBuilder(
+                key: ValueKey((account.uid, c.workspace.generation)),
                 future: c.workspaces.available(account.uid),
                 builder: (context, snapshot) => DropdownButton<String>(
                   isExpanded: true,
-                  value: c.workspace.record.id,
+                  value:
+                      snapshot.data?.any(
+                            (w) => w.id == c.workspace.record.id,
+                          ) ==
+                          true
+                      ? c.workspace.record.id
+                      : null,
                   items: snapshot.data
                       ?.map(
                         (w) => DropdownMenuItem(
@@ -417,16 +439,17 @@ class _AccountBackupScreenState extends State<AccountBackupScreen> {
                   onChanged: _busy
                       ? null
                       : (id) {
-                          if (id != null)
+                          if (id != null) {
                             _run(
                               () async => c.select(await c.workspaces.get(id)),
                             );
+                          }
                         },
                 ),
               ),
               if (c.workspace.record.ownerUid == null)
                 OutlinedButton(
-                  onPressed: _busy
+                  onPressed: _busy || !account.emailVerified
                       ? null
                       : () => _run(() async {
                           final estimate = await c.codec.estimate(c.workspace);
@@ -435,13 +458,12 @@ class _AccountBackupScreenState extends State<AccountBackupScreen> {
                             'Gắn kho khách?',
                             '${account.email}\n${estimate.decks} deck · ${estimate.cards} card\nKho này sẽ thuộc tài khoản trên.',
                             'Gắn và tiếp tục',
-                          ))
-                            await c.select(
-                              await c.workspaces.attach(
-                                c.workspace.record.id,
-                                account.uid,
-                              ),
+                          )) {
+                            await c.attachGuestWorkspace(
+                              c.workspace.record.id,
+                              account.uid,
                             );
+                          }
                         }),
                   child: const Text('Gắn kho này với tài khoản'),
                 ),
@@ -487,23 +509,26 @@ class _AccountBackupScreenState extends State<AccountBackupScreen> {
                           'Xóa bản sao?',
                           'Chỉ xóa bản cloud đã chọn; dữ liệu học trên thiết bị được giữ.',
                           'Xóa',
-                        ))
+                        )) {
                           await c.deleteBackup(backup);
+                        }
                       } else {
                         if (!await _ask(
                           'Khôi phục vào kho mới?',
                           'Giữ nguyên kho đang học. Ngày dữ liệu: ${DateTime.fromMillisecondsSinceEpoch(backup['snapshotAt'] as int).toLocal()}',
                           'Khôi phục vào kho mới',
-                        ))
+                        )) {
                           return;
+                        }
                         final restored = await c.restore(backup);
                         if (!mounted) return;
                         if (await _ask(
                           'Đã khôi phục',
                           'Chuyển sang kho vừa khôi phục?',
                           'Chuyển kho',
-                        ))
+                        )) {
                           await c.select(restored);
+                        }
                       }
                     }),
                     itemBuilder: (_) => [
@@ -534,7 +559,7 @@ class _AccountBackupScreenState extends State<AccountBackupScreen> {
                 child: const Text('Đăng xuất'),
               ),
             ],
-            if (c.message != null) Text(c.message!),
+            if (account == null && c.message != null) Text(c.message!),
             if (_busy) const Center(child: CircularProgressIndicator()),
           ],
         ),

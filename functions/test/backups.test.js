@@ -49,15 +49,15 @@ class MemoryMetadata {
 class MemoryObjects {
   values = new Map(); promoted = 0; failDelete = false;
   async uploadUrl(key) { return { url: `https://s3.example/${key}`, headers: {}, expiresAt: Date.now() + 600000 }; }
-  async head(key) { return this.values.has(key) ? { ContentLength: this.values.get(key).length } : null; }
+  async head(key) { return this.values.has(key) ? { ContentLength: this.values.get(key).length, ChecksumSHA256: Buffer.from(hash(this.values.get(key)), 'hex').toString('base64') } : null; }
   async read(key) { return Readable.from(this.values.get(key)); }
   async promote(source, destination) { this.promoted++; this.values.set(destination, this.values.get(source)); }
   async downloadUrl(key) { return `https://s3.example/${key}`; }
   async delete(key) { if (this.failDelete) throw Error('storage outage'); this.values.delete(key); }
 }
-async function server(run) {
+async function server(run, { timeoutMs } = {}) {
   const metadata = new MemoryMetadata(), objects = new MemoryObjects();
-  const app = createApp({ backup: { metadata, objects, verifyToken: async token => {
+  const app = createApp({ backup: { metadata, objects, timeoutMs, verifyToken: async token => {
     if (token === 'bad') throw Error('invalid');
     return { uid: token === 'B' ? 'B' : 'A', email_verified: token !== 'unverified' };
   } } });
@@ -121,3 +121,60 @@ test('delete failure retains intermediate state and a retry adjusts quota exactl
   assert.equal((await request('POST', '', f.request)).status, 409);
 }));
 module.exports = { fixture, zip, MemoryMetadata, MemoryObjects };
+
+test('finalize recovers a completed S3 copy when the metadata commit failed', () => server(async ({ request, metadata, objects }) => {
+  const f = fixture(); await request('POST', '', f.request); objects.values.set(keys(f.request).staging, f.archive);
+  const change = metadata.change.bind(metadata); let failReady = true;
+  metadata.change = (uid, id, workspace, action) => change(uid, id, workspace, (j, w) => {
+    const result = action(j, w);
+    if (failReady && result.job?.status === 'ready') { failReady = false; throw Error('metadata outage'); }
+    return result;
+  });
+  assert.equal((await request('POST', '/backup-1/finalize')).status, 503);
+  assert.equal((await metadata.get('A', 'backup-1')).status, 'uploading');
+  assert.ok(objects.values.has(keys(f.request).ready));
+  assert.equal((await request('POST', '/backup-1/finalize')).status, 200);
+  assert.equal(objects.promoted, 1); assert.equal(metadata.workspaces.get('A/workspace-1').readyCount, 1);
+}));
+
+test('lost metadata commit response preserves ready and retry does not increment quota twice', () => server(async ({ request, metadata, objects }) => {
+  const f = fixture(); await request('POST', '', f.request); objects.values.set(keys(f.request).staging, f.archive);
+  const change = metadata.change.bind(metadata); let loseReady = true;
+  metadata.change = async (...args) => {
+    const result = await change(...args);
+    if (loseReady && result?.status === 'ready') { loseReady = false; throw Error('lost response'); }
+    return result;
+  };
+  assert.equal((await request('POST', '/backup-1/finalize')).status, 503);
+  assert.equal((await request('GET', '/backup-1')).body.backup.status, 'ready');
+  assert.equal((await request('POST', '/backup-1/finalize')).status, 200);
+  assert.equal(metadata.workspaces.get('A/workspace-1').readyCount, 1);
+}));
+
+test('finalize lease blocks concurrent finalization and deletion', () => server(async ({ request, metadata, objects }) => {
+  const f = fixture(); await request('POST', '', f.request); objects.values.set(keys(f.request).staging, f.archive);
+  const promote = objects.promote.bind(objects); let markCopying, release;
+  const copying = new Promise(resolve => { markCopying = resolve; });
+  const held = new Promise(resolve => { release = resolve; });
+  objects.promote = async (...args) => { markCopying(); await held; return promote(...args); };
+  const first = request('POST', '/backup-1/finalize'); await copying;
+  assert.equal((await request('POST', '/backup-1/finalize')).body.error, 'backup_busy');
+  assert.equal((await request('DELETE', '/backup-1')).body.error, 'backup_busy');
+  release(); assert.equal((await first).status, 200);
+  assert.equal(metadata.workspaces.get('A/workspace-1').readyCount, 1);
+}));
+
+test('malformed ZIP and unsafe paths return a backup-specific archive error', async () => {
+  const f = fixture(); const bad = Buffer.from('not-a-zip');
+  await assert.rejects(inspectArchive(Readable.from(bad), { ...f.request, sizeBytes: bad.length, bundleHash: hash(bad) }), e => e.code === 'invalid_archive');
+  const unsafe = fixture({ extra: [['../secret', 'x']] });
+  await assert.rejects(inspectArchive(Readable.from(unsafe.archive), unsafe.request), e => e.code === 'invalid_archive');
+});
+test('finalize timeout aborts a stalled S3 stream and releases its lease for retry', () => server(async ({ request, metadata, objects }) => {
+  const f = fixture(); await request('POST', '', f.request); objects.values.set(keys(f.request).staging, f.archive);
+  objects.read = async () => new Readable({ read() {} });
+  const response = await request('POST', '/backup-1/finalize');
+  assert.equal(response.status, 504); assert.equal(response.body.error, 'backup_timeout');
+  assert.equal((await metadata.get('A', 'backup-1')).status, 'uploading');
+  assert.equal(metadata.workspaces.get('A/workspace-1').readyCount, 0);
+}, { timeoutMs: 30 }));

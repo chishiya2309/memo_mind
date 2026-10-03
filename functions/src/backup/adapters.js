@@ -12,13 +12,13 @@ class S3Objects {
     const url = await getSignedUrl(this.client, command, { expiresIn: limits.urlSeconds, unhoistableHeaders: new Set(['x-amz-checksum-sha256']), signableHeaders: new Set(['content-type', 'content-length', 'if-none-match']) });
     return { url, headers: { 'Content-Type': 'application/zip', 'Content-Length': String(job.sizeBytes), 'x-amz-checksum-sha256': checksum, 'If-None-Match': '*' }, expiresAt: Date.now() + limits.urlSeconds * 1000 };
   }
-  async head(key) {
-    try { return await this.client.send(new HeadObjectCommand({ Bucket: this.bucket, Key: key, ChecksumMode: 'ENABLED' })); }
+  async head(key, { signal } = {}) {
+    try { return await this.client.send(new HeadObjectCommand({ Bucket: this.bucket, Key: key, ChecksumMode: 'ENABLED' }), { abortSignal: signal }); }
     catch (e) { if (e.$metadata?.httpStatusCode === 404) return null; throw e; }
   }
-  async read(key) { return (await this.client.send(new GetObjectCommand({ Bucket: this.bucket, Key: key }))).Body; }
-  async promote(source, destination) {
-    await this.client.send(new CopyObjectCommand({ Bucket: this.bucket, Key: destination, CopySource: `${this.bucket}/${source.split('/').map(encodeURIComponent).join('/')}`, IfNoneMatch: '*', ChecksumAlgorithm: 'SHA256' }));
+  async read(key, { signal } = {}) { return (await this.client.send(new GetObjectCommand({ Bucket: this.bucket, Key: key }), { abortSignal: signal })).Body; }
+  async promote(source, destination, { signal } = {}) {
+    await this.client.send(new CopyObjectCommand({ Bucket: this.bucket, Key: destination, CopySource: `${this.bucket}/${source.split('/').map(encodeURIComponent).join('/')}`, IfNoneMatch: '*', ChecksumAlgorithm: 'SHA256' }), { abortSignal: signal });
   }
   async downloadUrl(key) { return getSignedUrl(this.client, new GetObjectCommand({ Bucket: this.bucket, Key: key }), { expiresIn: limits.urlSeconds }); }
   async delete(key) { await this.client.send(new DeleteObjectCommand({ Bucket: this.bucket, Key: key })); }
@@ -44,8 +44,10 @@ class FirestoreMetadata {
 
 function configuredAdapters() {
   if (!process.env.S3_BACKUP_BUCKET || !process.env.FIREBASE_PROJECT_ID) return null;
-  const admin = require('firebase-admin');
-  const app = admin.apps.find(a => a.name === 'fr18') || admin.initializeApp({ credential: admin.credential.applicationDefault(), projectId: process.env.FIREBASE_PROJECT_ID }, 'fr18');
-  return { verifyToken: token => admin.auth(app).verifyIdToken(token, true), metadata: new FirestoreMetadata(admin.firestore(app)), objects: new S3Objects({ bucket: process.env.S3_BACKUP_BUCKET, region: process.env.AWS_REGION || 'ap-southeast-1' }) };
+  const { getApps, initializeApp, applicationDefault } = require('firebase-admin/app');
+  const { getAuth } = require('firebase-admin/auth');
+  const { getFirestore } = require('firebase-admin/firestore');
+  const app = getApps().find(a => a.name === 'fr18') || initializeApp({ credential: applicationDefault(), projectId: process.env.FIREBASE_PROJECT_ID }, 'fr18');
+  return { verifyToken: token => getAuth(app).verifyIdToken(token, true), metadata: new FirestoreMetadata(getFirestore(app)), objects: new S3Objects({ bucket: process.env.S3_BACKUP_BUCKET, region: process.env.AWS_REGION || 'ap-southeast-1' }) };
 }
 module.exports = { S3Objects, FirestoreMetadata, configuredAdapters };

@@ -117,4 +117,65 @@ void main() {
     await expectLater(controller.backup(), throwsA(isA<AccountFailure>()));
     expect(api.begins, 0);
   });
+  test('failed upload retries the same frozen job after local edits', () async {
+    api.failNextUpload = true;
+    await expectLater(controller.backup(), throwsA(isA<AccountFailure>()));
+    final first = {...api.registered!};
+    await LocalDeckRepository().createDeck(title: 'After failure');
+    await controller.backup(retry: true);
+    expect(api.registered!['backupId'], first['backupId']);
+    expect(api.registered!['bundleHash'], first['bundleHash']);
+    expect(api.begins, 2);
+    expect(await controller.hasChanges(), isTrue);
+    expect(await File(first['path'] as String).exists(), isFalse);
+  });
+  test(
+    'lost finalize response reconciles server ready without another upload',
+    () async {
+      api.loseNextFinalizeResponse = true;
+      await expectLater(controller.backup(), throwsA(isA<AccountFailure>()));
+      final firstId = api.registered!['backupId'];
+      await controller.backup(retry: true);
+      expect(api.registered!['backupId'], firstId);
+      expect(api.begins, 1);
+      expect(api.finalizes, 1);
+      expect(await controller.hasChanges(), isFalse);
+    },
+  );
+  test(
+    'guest attachment requires verified current UID; logout keeps owned data',
+    () async {
+      final owned = controller.workspace.record;
+      await LocalDeckRepository().createDeck(title: 'Private A');
+      await controller.signOut();
+      final guest = controller.workspace.record;
+      expect(guest.ownerUid, isNull);
+      expect(await LocalDeckRepository().getDecks(), isEmpty);
+      auth.change(
+        const AccountIdentity(
+          uid: 'A',
+          email: 'a@example.com',
+          emailVerified: false,
+        ),
+      );
+      await expectLater(
+        controller.attachGuestWorkspace(guest.id, 'A'),
+        throwsA(isA<AccountFailure>()),
+      );
+      expect((await workspaces.get(guest.id)).ownerUid, isNull);
+      auth.change(
+        const AccountIdentity(
+          uid: 'A',
+          email: 'a@example.com',
+          emailVerified: true,
+        ),
+      );
+      await controller.afterLogin(attachGuest: false);
+      expect(controller.workspace.record.id, owned.id);
+      expect(
+        (await LocalDeckRepository().getDecks()).single.title,
+        'Private A',
+      );
+    },
+  );
 }

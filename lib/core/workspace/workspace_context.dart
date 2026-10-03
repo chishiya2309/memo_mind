@@ -198,17 +198,29 @@ class WorkspaceRepository {
       whereArgs: [id],
     )).single,
   );
-  Future<void> select(WorkspaceRecord record) async {
+  Future<void> select(
+    WorkspaceRecord record, {
+    Future<void> Function()? beforeRevoke,
+  }) async {
     if (record.status != 'ready') throw StateError('Kho chưa sẵn sàng.');
+    if (!await File(record.databasePath).exists()) {
+      throw StateError('Không tìm thấy database của kho.');
+    }
     final next = WorkspaceContext(record, ++_generation);
-    await next.database.database;
-    await registry.insert('selections', {
-      'owner_key': record.ownerUid ?? 'guest',
-      'workspace_id': record.id,
-    }, conflictAlgorithm: ConflictAlgorithm.replace);
-    await current?.revoke();
-    current = next;
-    WorkspaceRuntime.current = next;
+    try {
+      await next.database.database;
+      await registry.insert('selections', {
+        'owner_key': record.ownerUid ?? 'guest',
+        'workspace_id': record.id,
+      }, conflictAlgorithm: ConflictAlgorithm.replace);
+      await beforeRevoke?.call();
+      await current?.revoke();
+      current = next;
+      WorkspaceRuntime.current = next;
+    } catch (_) {
+      await next.revoke();
+      rethrow;
+    }
   }
 
   Future<void> publish(String id) async {
@@ -222,8 +234,9 @@ class WorkspaceRepository {
 
   Future<void> close() async {
     await current?.revoke();
-    if (identical(WorkspaceRuntime.current, current))
+    if (identical(WorkspaceRuntime.current, current)) {
       WorkspaceRuntime.current = null;
+    }
     WorkspaceRuntime.deviceSettings = null;
     WorkspaceRuntime.deviceId = null;
     await registry.close();

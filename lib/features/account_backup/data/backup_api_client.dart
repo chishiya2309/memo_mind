@@ -35,16 +35,19 @@ class BackupApiClient {
         uri == null ||
         !uri.hasAuthority ||
         (uri.scheme != 'https' &&
-            !['localhost', '127.0.0.1', '10.0.2.2'].contains(uri.host)))
+            !['localhost', '127.0.0.1', '10.0.2.2'].contains(uri.host))) {
       throw const AccountFailure(
         'backup_not_configured',
         'Chưa cấu hình dịch vụ sao lưu HTTPS.',
       );
-    if (auth.current?.uid != uid)
+    }
+    if (auth.current?.uid != uid) {
       throw const AccountFailure('reauth_required', 'Tài khoản đã thay đổi.');
+    }
     final token = await auth.token(refresh: true);
-    if (auth.current?.uid != uid)
+    if (auth.current?.uid != uid) {
       throw const AccountFailure('reauth_required', 'Tài khoản đã thay đổi.');
+    }
     final client = _injectedClient ?? http.Client();
     try {
       final req = http.Request(method, uri)
@@ -53,16 +56,17 @@ class BackupApiClient {
           'Content-Type': 'application/json',
         });
       if (body != null) req.body = jsonEncode(body);
-      final response = await http.Response.fromStream(
-        await client.send(req).timeout(const Duration(minutes: 10)),
-      ).timeout(const Duration(minutes: 10));
+      final response = await (() async => http.Response.fromStream(
+        await client.send(req),
+      ))().timeout(const Duration(minutes: 10));
       final decoded =
           jsonDecode(utf8.decode(response.bodyBytes)) as Map<String, dynamic>;
-      if (response.statusCode < 200 || response.statusCode >= 300)
+      if (response.statusCode < 200 || response.statusCode >= 300) {
         throw AccountFailure(
           decoded['error'] as String? ?? 'backup_failed',
           decoded['message'] as String? ?? 'Không thể xử lý sao lưu.',
         );
+      }
       return decoded;
     } on TimeoutException {
       throw const AccountFailure(
@@ -101,19 +105,36 @@ class BackupApiClient {
       );
       final sending = client.send(request);
       var sent = 0;
-      await for (final chunk in file.openRead()) {
-        request.sink.add(chunk);
-        sent += chunk.length;
-        progress(sent / request.contentLength!);
-      }
-      await request.sink.close();
-      final response = await sending.timeout(const Duration(minutes: 10));
-      await response.stream.drain<void>();
-      if (response.statusCode != 200 && response.statusCode != 412)
+      final feeding = (() async {
+        try {
+          await request.sink.addStream(
+            file.openRead().map((chunk) {
+              sent += chunk.length;
+              progress(sent / request.contentLength!);
+              return chunk;
+            }),
+          );
+        } finally {
+          await request.sink.close();
+        }
+      })();
+      // Attach handlers to both futures immediately: cancelling a transfer may
+      // fail the HTTP request before the file stream has finished feeding it.
+      final response = await (() async {
+        final results = await Future.wait<Object?>([
+          sending,
+          feeding,
+        ], eagerError: true);
+        final result = results.first as http.StreamedResponse;
+        await result.stream.drain<void>();
+        return result;
+      })().timeout(const Duration(minutes: 10));
+      if (response.statusCode != 200 && response.statusCode != 412) {
         throw const AccountFailure(
           'waiting_network',
           'Chưa tải được gói. Có thể thử lại snapshot này.',
         );
+      }
     } on http.ClientException {
       throw const AccountFailure(
         'waiting_network',
@@ -130,12 +151,18 @@ class BackupApiClient {
   Future<void> download(String url, File destination) async {
     final client = http.Client();
     _active.add(client);
+    var timedOut = false;
+    final deadline = Timer(const Duration(minutes: 10), () {
+      timedOut = true;
+      client.close();
+    });
     try {
       final response = await client
           .send(http.Request('GET', Uri.parse(url)))
           .timeout(const Duration(minutes: 10));
-      if (response.statusCode != 200)
+      if (response.statusCode != 200) {
         throw const AccountFailure('download_failed', 'Không thể tải bản sao.');
+      }
       final sink = destination.openWrite();
       var total = 0;
       try {
@@ -143,17 +170,31 @@ class BackupApiClient {
           const Duration(minutes: 10),
         )) {
           total += chunk.length;
-          if (total > 100 * 1024 * 1024)
+          if (total > 100 * 1024 * 1024) {
             throw const AccountFailure(
               'backup_limit',
               'Gói vượt giới hạn 100 MiB.',
             );
+          }
           sink.add(chunk);
         }
       } finally {
         await sink.close();
       }
+    } on http.ClientException {
+      throw AccountFailure(
+        timedOut ? 'backup_timeout' : 'waiting_network',
+        timedOut
+            ? 'Tải bản sao quá thời gian chờ 10 phút.'
+            : 'Mạng bị ngắt hoặc tác vụ đã dừng.',
+      );
+    } on TimeoutException {
+      throw const AccountFailure(
+        'backup_timeout',
+        'Tải bản sao quá thời gian chờ 10 phút.',
+      );
     } finally {
+      deadline.cancel();
       _active.remove(client);
       client.close();
     }

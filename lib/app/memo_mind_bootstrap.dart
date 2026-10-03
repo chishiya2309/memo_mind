@@ -65,11 +65,12 @@ class _MemoMindBootstrapState extends State<MemoMindBootstrap> {
         _error = null;
       });
     } catch (_) {
-      if (mounted)
+      if (mounted) {
         setState(
           () => _error =
               'Không thể mở kho dữ liệu. Dữ liệu cũ được giữ; hãy thử lại.',
         );
+      }
     }
   }
 
@@ -93,14 +94,16 @@ class _MemoMindBootstrapState extends State<MemoMindBootstrap> {
 
   @override
   Widget build(BuildContext context) {
-    if (!_accessAllowed && _account != null)
+    if (!_accessAllowed && _account != null) {
       return MaterialApp(home: AccountBackupScreen(controller: _account!));
-    if (_generation >= 0)
+    }
+    if (_generation >= 0) {
       return MemoMindApp(
         key: ValueKey(_generation),
         account: _account,
         reopenAccount: _reopenAccount,
       );
+    }
     return MaterialApp(
       home: Scaffold(
         body: Center(
