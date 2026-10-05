@@ -95,6 +95,7 @@ class LocalDeckRepository implements DeckRepository {
       'created_at': now.millisecondsSinceEpoch,
       'updated_at': now.millisecondsSinceEpoch,
     });
+    _database.notifyStudyChanged();
     return deck;
   }
 
@@ -107,8 +108,7 @@ class LocalDeckRepository implements DeckRepository {
     List<String>? tags,
   }) async {
     final name = _title(title);
-    final db = await _database.database;
-    final result = await db.transaction((txn) async {
+    final result = await _database.studyTransaction((txn) async {
       final rows = await txn.query(
         'decks',
         where: "deck_id=? AND status='active'",
@@ -135,15 +135,14 @@ class LocalDeckRepository implements DeckRepository {
         )).single,
       );
     });
-    _database.notifyStudyChanged();
+    await _database.notifyLegacyStudyChanged();
     return result;
   }
 
   @override
   Future<void> deleteDeck(String deckId) async {
-    final db = await _database.database;
     final now = _clock().toUtc().millisecondsSinceEpoch;
-    await db.transaction((txn) async {
+    await _database.studyTransaction((txn) async {
       await txn.update(
         'decks',
         {'status': 'deleted', 'card_count': 0, 'updated_at': now},
@@ -157,7 +156,7 @@ class LocalDeckRepository implements DeckRepository {
         whereArgs: [deckId],
       );
     });
-    _database.notifyStudyChanged();
+    await _database.notifyLegacyStudyChanged();
   }
 
   Future<void> _refreshCount(DatabaseExecutor db, String deckId, int now) => db
@@ -171,9 +170,8 @@ class LocalDeckRepository implements DeckRepository {
 
   @override
   Future<void> deleteCard(String cardId) async {
-    final db = await _database.database;
     final now = _clock().toUtc().millisecondsSinceEpoch;
-    await db.transaction((txn) async {
+    await _database.studyTransaction((txn) async {
       final rows = await txn.query(
         'cards',
         where: 'card_id=?',
@@ -188,7 +186,7 @@ class LocalDeckRepository implements DeckRepository {
       );
       await _refreshCount(txn, rows.single['deck_id'] as String, now);
     });
-    _database.notifyStudyChanged();
+    await _database.notifyLegacyStudyChanged();
   }
 
   Map<String, Object?> _contentValues(CardContent content) => {
@@ -217,10 +215,9 @@ class LocalDeckRepository implements DeckRepository {
     required CardContent content,
   }) async {
     content.validate();
-    final db = await _database.database;
     final now = _clock().toUtc();
     final id = _uuid.v4();
-    final result = await db.transaction((txn) async {
+    final result = await _database.studyTransaction((txn) async {
       if ((await txn.query(
         'decks',
         where: "deck_id=? AND status='active'",
@@ -247,7 +244,7 @@ class LocalDeckRepository implements DeckRepository {
         (await txn.query('cards', where: 'card_id=?', whereArgs: [id])).single,
       );
     });
-    _database.notifyStudyChanged();
+    await _database.notifyLegacyStudyChanged();
     return result;
   }
 
@@ -257,8 +254,7 @@ class LocalDeckRepository implements DeckRepository {
     required CardContent content,
   }) async {
     content.validate();
-    final db = await _database.database;
-    final result = await db.transaction((txn) async {
+    final result = await _database.studyTransaction((txn) async {
       final rows = await txn.rawQuery(
         """SELECT c.* FROM cards c JOIN decks d ON d.deck_id=c.deck_id
         WHERE c.card_id=? AND c.status!='deleted' AND d.status='active'""",
@@ -284,7 +280,7 @@ class LocalDeckRepository implements DeckRepository {
         )).single,
       );
     });
-    _database.notifyStudyChanged();
+    await _database.notifyLegacyStudyChanged();
     return result;
   }
 
@@ -398,10 +394,9 @@ class LocalDeckRepository implements DeckRepository {
     required List<CardEntity> cards,
   }) async {
     if (cards.isEmpty) return;
-    final db = await _database.database;
     final now = _clock().millisecondsSinceEpoch;
 
-    await db.transaction((txn) async {
+    await _database.studyTransaction((txn) async {
       final decks = await txn.query(
         'decks',
         columns: ['deck_id'],
@@ -505,7 +500,7 @@ class LocalDeckRepository implements DeckRepository {
         [deckId, now, deckId],
       );
     });
-    _database.notifyStudyChanged();
+    await _database.notifyLegacyStudyChanged();
   }
 
   @override

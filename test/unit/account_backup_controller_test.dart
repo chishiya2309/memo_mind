@@ -9,10 +9,12 @@ import 'package:memo_mind/core/workspace/workspace_context.dart';
 import 'package:memo_mind/features/account_backup/application/account_backup_controller.dart';
 import 'package:memo_mind/features/account_backup/domain/auth_repository.dart';
 import 'package:memo_mind/features/deck_management/data/local_deck_repository.dart';
+import 'package:memo_mind/features/sync/application/sync_controller.dart';
 
 import '../support/account_backup_fakes.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
   late Directory root;
   late WorkspaceRepository workspaces;
   late FakeAccountAuth auth;
@@ -44,6 +46,11 @@ void main() {
       auth: auth,
       workspaces: workspaces,
       api: api,
+      syncController: SyncController(
+        auth: auth,
+        workspaces: workspaces,
+        api: FakeSyncApi(auth),
+      ),
     );
   });
   tearDown(() async {
@@ -171,11 +178,20 @@ void main() {
         ),
       );
       await controller.afterLogin(attachGuest: false);
-      expect(controller.workspace.record.id, owned.id);
-      expect(
-        (await LocalDeckRepository().getDecks()).single.title,
-        'Private A',
-      );
+      expect(controller.workspace.record.id, isNot(owned.id));
+      expect(await workspaces.isCanonical(controller.workspace.record), isTrue);
+      expect(await LocalDeckRepository().getDecks(), isEmpty);
+      final legacy = WorkspaceContext(await workspaces.get(owned.id), -10);
+      try {
+        expect(
+          (await LocalDeckRepository(
+            database: legacy.database,
+          ).getDecks()).single.title,
+          'Private A',
+        );
+      } finally {
+        await legacy.revoke();
+      }
     },
   );
 }

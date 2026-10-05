@@ -2,6 +2,9 @@ import 'dart:async';
 
 import 'package:path/path.dart' as p;
 import 'package:sqflite/sqflite.dart';
+import 'package:uuid/uuid.dart';
+
+import 'sync_schema.dart';
 
 class MemoMindDatabase {
   MemoMindDatabase._();
@@ -22,6 +25,17 @@ class MemoMindDatabase {
 
   // Publish only after a successful commit. Async listeners cannot fail the write.
   void notifyStudyChanged() => _studyChanges.add(null);
+
+  // v10 transactions publish their own change once; older test/import schemas
+  // retain the repository's explicit notification after committing.
+  Future<void> notifyLegacyStudyChanged() async {
+    final db = await database;
+    if ((await db.rawQuery(
+      "SELECT name FROM sqlite_master WHERE name='sync_control'",
+    )).isEmpty) {
+      notifyStudyChanged();
+    }
+  }
 
   Future<Database> get database async {
     if (_revoked) throw StateError('Kho đã đóng. Hãy mở lại màn hình học.');
@@ -44,9 +58,9 @@ class MemoMindDatabase {
     return openDatabase(
       _path ?? p.join(root, 'memo_mind.db'),
       singleInstance: false,
-      version: 9,
+      version: 10,
       onConfigure: (db) async => db.execute('PRAGMA foreign_keys = ON'),
-      onCreate: (db, version) => createV9(db),
+      onCreate: (db, version) => createV10(db),
       onUpgrade: (db, oldVersion, newVersion) async {
         if (oldVersion < 2) await migrateV1ToV2(db);
         if (oldVersion < 3) await migrateV2ToV3(db);
@@ -56,6 +70,7 @@ class MemoMindDatabase {
         if (oldVersion < 7) await migrateV6ToV7(db);
         if (oldVersion < 8) await migrateV7ToV8(db);
         if (oldVersion < 9) await migrateV8ToV9(db);
+        if (oldVersion < 10) await migrateV9ToV10(db);
       },
     );
   }
@@ -657,7 +672,7 @@ class MemoMindDatabase {
     await db?.close();
   }
 
-  static const studyTables = [
+  static const studyTablesV9 = [
     'documents',
     'source_pages',
     'page_normalizations',
@@ -668,10 +683,57 @@ class MemoMindDatabase {
     'review_sessions',
     'review_events',
   ];
+  static const studyTables = [...studyTablesV9, 'card_schedules'];
 
   static Future<void> createV9(DatabaseExecutor db) async {
     await createV8(db);
     await migrateV8ToV9(db);
+  }
+
+  static Future<void> createV10(DatabaseExecutor db) async {
+    await createV9(db);
+    await migrateV9ToV10(db);
+  }
+
+  static Future<void> migrateV9ToV10(DatabaseExecutor db) =>
+      createSyncSchema(db);
+
+  Future<T> studyTransaction<T>(Future<T> Function(Transaction) action) async {
+    final db = await database;
+    final hasSync = (await db.rawQuery(
+      "SELECT name FROM sqlite_master WHERE name='sync_control'",
+    )).isNotEmpty;
+    var changed = false;
+    final result = await db.transaction((txn) async {
+      final before = hasSync
+          ? Sqflite.firstIntValue(
+              await txn.rawQuery(
+                'SELECT COALESCE(MAX(sequence),0) FROM sync_outbox',
+              ),
+            )
+          : 0;
+      if (hasSync) {
+        await txn.update('sync_control', {
+          'group_id': const Uuid().v4(),
+        }, where: 'id=1');
+      }
+      final result = await action(txn);
+      if (hasSync) {
+        changed =
+            Sqflite.firstIntValue(
+              await txn.rawQuery(
+                'SELECT COALESCE(MAX(sequence),0) FROM sync_outbox',
+              ),
+            ) !=
+            before;
+      }
+      if (hasSync) {
+        await txn.update('sync_control', {'group_id': null}, where: 'id=1');
+      }
+      return result;
+    });
+    if (changed) notifyStudyChanged();
+    return result;
   }
 
   static Future<void> migrateV8ToV9(DatabaseExecutor db) async {
@@ -679,7 +741,7 @@ class MemoMindDatabase {
       'CREATE TABLE workspace_revision (id INTEGER PRIMARY KEY CHECK(id=1), revision INTEGER NOT NULL)',
     );
     await db.insert('workspace_revision', {'id': 1, 'revision': 0});
-    for (final table in studyTables) {
+    for (final table in studyTablesV9) {
       for (final operation in ['INSERT', 'UPDATE', 'DELETE']) {
         await db.execute(
           'CREATE TRIGGER revision_${table}_${operation.toLowerCase()} AFTER $operation ON $table BEGIN UPDATE workspace_revision SET revision=revision+1 WHERE id=1; END',

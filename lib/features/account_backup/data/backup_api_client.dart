@@ -7,11 +7,18 @@ import 'package:http/http.dart' as http;
 import '../domain/auth_repository.dart';
 
 class BackupApiClient {
-  BackupApiClient({required this.auth, String? baseUrl, http.Client? client})
-    : baseUrl = baseUrl ?? const String.fromEnvironment('BACKEND_BASE_URL'),
-      _injectedClient = client;
+  BackupApiClient({
+    required this.auth,
+    String? baseUrl,
+    http.Client? client,
+    this.apiPath = 'backups',
+    this.requestTimeout = const Duration(minutes: 10),
+  }) : baseUrl = baseUrl ?? const String.fromEnvironment('BACKEND_BASE_URL'),
+       _injectedClient = client;
   final AuthRepository auth;
   final String baseUrl;
+  final String apiPath;
+  final Duration requestTimeout;
   final http.Client? _injectedClient;
   final _active = <http.Client>{};
   void cancelTransfers() {
@@ -29,7 +36,7 @@ class BackupApiClient {
   }) async {
     final base = baseUrl.trim().replaceFirst(RegExp(r'/+$'), '');
     final uri = Uri.tryParse(
-      '$base${base.endsWith('/api') ? '' : '/api'}/v1/backups$suffix',
+      '$base${base.endsWith('/api') ? '' : '/api'}/v1/$apiPath$suffix',
     );
     if (base.isEmpty ||
         uri == null ||
@@ -49,6 +56,7 @@ class BackupApiClient {
       throw const AccountFailure('reauth_required', 'Tài khoản đã thay đổi.');
     }
     final client = _injectedClient ?? http.Client();
+    _active.add(client);
     try {
       final req = http.Request(method, uri)
         ..headers.addAll({
@@ -58,7 +66,7 @@ class BackupApiClient {
       if (body != null) req.body = jsonEncode(body);
       final response = await (() async => http.Response.fromStream(
         await client.send(req),
-      ))().timeout(const Duration(minutes: 10));
+      ))().timeout(requestTimeout);
       final decoded =
           jsonDecode(utf8.decode(response.bodyBytes)) as Map<String, dynamic>;
       if (response.statusCode < 200 || response.statusCode >= 300) {
@@ -71,7 +79,7 @@ class BackupApiClient {
     } on TimeoutException {
       throw const AccountFailure(
         'unconfirmed',
-        'Chưa xác nhận kết quả. Hãy đối chiếu bản sao trước khi thử lại.',
+        'Chưa xác nhận kết quả. Hãy thử lại; thay đổi vẫn được giữ trên thiết bị.',
       );
     } on http.ClientException {
       throw const AccountFailure(
@@ -84,6 +92,7 @@ class BackupApiClient {
         'Dịch vụ trả dữ liệu không hợp lệ.',
       );
     } finally {
+      _active.remove(client);
       if (_injectedClient == null) client.close();
     }
   }

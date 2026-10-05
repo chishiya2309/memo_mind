@@ -103,11 +103,10 @@ class LocalOcrRepository implements OcrRepository {
     required String rawFullText,
     String? language,
   }) async {
-    final db = await _database.database;
     final now = _clock().millisecondsSinceEpoch;
 
     try {
-      await db.transaction((txn) async {
+      await _database.studyTransaction((txn) async {
         // Check existing user-edited or user-added blocks (BR04-07)
         final existingRows = await txn.query(
           'source_blocks',
@@ -345,10 +344,9 @@ class LocalOcrRepository implements OcrRepository {
 
   @override
   Future<void> confirmOcrReview(String documentId) async {
-    final db = await _database.database;
     final now = _clock().millisecondsSinceEpoch;
 
-    await db.transaction((txn) async {
+    await _database.studyTransaction((txn) async {
       // Mark all non-deleted blocks of this document as verified
       await txn.update(
         'source_blocks',

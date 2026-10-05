@@ -1,4 +1,7 @@
 import 'package:flutter/foundation.dart';
+
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -67,6 +70,13 @@ class _MemoMindBootstrapState extends State<MemoMindBootstrap> {
         _generation = workspaces.current!.generation;
         _error = null;
       });
+      if (auth.current?.emailVerified == true) {
+        unawaited(
+          account.afterLogin(attachGuest: false).catchError((Object _) {
+            account.message = 'Chưa mở được thư viện đồng bộ. Dữ liệu trên thiết bị được giữ.';
+          }),
+        );
+      }
     } catch (_) {
       if (mounted) {
         setState(

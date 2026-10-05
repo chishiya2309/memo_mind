@@ -7,7 +7,7 @@ MemoMind AI is an Android focused Flutter app for turning lecture documents into
 - Imported pages, confirmed OCR source blocks, decks, and cards are stored in SQLite. Accepted cards retain a document, page, and source block link.
 - OCR runs on the device. Optional crop enhancement sends only the selected JPEG region to the Express API after user consent.
 - The Express API in `functions/` proxies Groq material generation and Gemini OCR enhancement. Provider API keys stay on the server and never ship in Flutter.
-- Offline review uses an SM-2 scheduler. SQLite v9 adds transactional workspace revisions; each account has an isolated database and source directory. FR18 provides manual backups with Firebase Authentication, Express, Firestore metadata and private Amazon S3 archives. Automatic sync and merging remain outside FR18.
+- Offline review uses an SM-2 scheduler. SQLite v10 adds a durable sync outbox, server versions, conflict storage and a separate schedule stream. Each account uses one canonical library across devices, authenticated through Firebase and the Express sync API; private S3 sources are transferred by SHA-256. Recovery snapshots and preserved older local libraries are available under Advanced. See [sync deployment and acceptance](docs/deployment/sync-setup.md).
 
 ## Project layout
 
@@ -129,10 +129,10 @@ Do not commit `.env` files, service account keys, or other server/production cre
 
 Be Vietnam Pro font files are bundled for offline use. Its license is in `licenses/BeVietnamPro-OFL.txt`.
 
-## Account and manual backups (FR18)
+## Account and synchronization
 
-Open **Cá nhân → Cài đặt → Tài khoản và sao lưu**. Firebase Auth supports Google/email, verification, password reset and provider linking. Guest attachment requires a verified account and explicit consent. Logout keeps private workspaces locally and opens a guest workspace. Restoring a verified ready archive creates another workspace and requires confirmation before switching.
+Open **Cá nhân → Cài đặt → Tài khoản và đồng bộ**. Firebase Auth supports Google/email, verification, password reset and provider linking. A verified account uses one canonical study library on every device. Guest lessons can be added with consent or kept separately. Logout preserves local data and offers synchronization first when changes are pending.
 
-Express issues checksum-bound S3 URLs, verifies the complete archive, and commits ready metadata through Firestore transactions. Retry keeps the same frozen snapshot and backup ID. No automatic synchronization or workspace merge is performed.
+Sync runs after login, app resume, connectivity recovery and study changes, with a manual action on Home and Library. Content conflicts preserve both variants; review history merges by event ID and schedules converge by review time. Recovery history and older local libraries are under Advanced. Restoring a previewed snapshot creates versioned changes in the same canonical library and warns that those changes propagate to other devices.
 
-See [Firebase/S3 setup](docs/deployment/fr18-setup.md) and [FR18 validation](docs/fr18-validation.md). Cloud backup has no default backend URL: configure `config/fr18.local.json` and use `--dart-define-from-file`. Server credentials never belong in this file or an APK.
+See [sync setup](docs/deployment/sync-setup.md), [sync validation](docs/sync-validation.md) and the original [Firebase/S3 configuration](docs/deployment/fr18-setup.md). Configure `config/fr18.local.json` and use `--dart-define-from-file`; backend credentials never belong in this file or an APK.

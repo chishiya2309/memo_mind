@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 
 import '../application/account_backup_controller.dart';
 import '../domain/auth_repository.dart';
+import '../../sync/presentation/sync_widgets.dart';
+import '../../sync/data/local_sync_store.dart';
 
 class AccountBackupScreen extends StatefulWidget {
   const AccountBackupScreen({super.key, required this.controller});
@@ -24,7 +26,7 @@ class _AccountBackupScreenState extends State<AccountBackupScreen> {
     super.initState();
     c.accountScreens++;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) unawaited(c.refreshCloud());
+      if (mounted) c.sync.schedule(immediate: true);
     });
   }
 
@@ -62,7 +64,12 @@ class _AccountBackupScreenState extends State<AccountBackupScreen> {
 
   void _notice(String text) =>
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
-  Future<bool> _ask(String title, String text, String action) async =>
+  Future<bool> _ask(
+    String title,
+    String text,
+    String action, {
+    String cancel = 'Hủy',
+  }) async =>
       await showDialog<bool>(
         context: context,
         builder: (context) => AlertDialog(
@@ -71,7 +78,7 @@ class _AccountBackupScreenState extends State<AccountBackupScreen> {
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context, false),
-              child: const Text('Hủy'),
+              child: Text(cancel),
             ),
             FilledButton(
               onPressed: () => Navigator.pop(context, true),
@@ -82,21 +89,23 @@ class _AccountBackupScreenState extends State<AccountBackupScreen> {
       ) ??
       false;
   Future<void> _afterLogin() async {
-    final account = c.account!;
-    final owned = (await c.workspaces.available(account.uid))
-        .where((w) => w.ownerUid == account.uid);
     var attach = false;
-    if (mounted &&
-        account.emailVerified &&
-        c.workspace.record.ownerUid == null &&
-        owned.isEmpty) {
-      final estimate = await c.codec.estimate(c.workspace);
+    if (c.account!.emailVerified && c.workspace.record.ownerUid == null) {
+      final guestStore = LocalSyncStore(c.workspace);
+      final choiceKey = 'guestChoice.${c.account!.uid}';
+      final previousChoice = await guestStore.setting(choiceKey);
+      final count = await c.codec.estimate(c.workspace);
       if (!mounted) return;
-      attach = await _ask(
-        'Gắn dữ liệu đang học trên thiết bị với tài khoản này?',
-        '${account.email}\n${estimate.decks} deck · ${estimate.cards} card\nChưa gắn thì kho khách vẫn độc lập.',
-        'Gắn và tiếp tục',
-      );
+      if (previousChoice == null &&
+          (count.decks > 0 || count.cards > 0 || count.files > 0)) {
+        attach = await _ask(
+          'Thêm bài học trên thiết bị vào tài khoản?',
+          '${c.account!.email}\n${count.decks} bộ thẻ · ${count.cards} thẻ',
+          'Thêm vào tài khoản',
+          cancel: 'Giữ riêng trên thiết bị',
+        );
+        await guestStore.setSetting(choiceKey, attach ? 'merged' : 'private');
+      }
     }
     await c.afterLogin(attachGuest: attach);
   }
@@ -121,27 +130,15 @@ class _AccountBackupScreenState extends State<AccountBackupScreen> {
     }
     await _afterLogin();
   });
-  Future<void> _backup() async {
-    final estimate = await c.codec.estimate(c.workspace);
-    if (!mounted) return;
-    if (await _ask(
-      'Sao lưu toàn kho riêng tư',
-      '${estimate.decks} deck · ${estimate.cards} card\n${estimate.files} tệp · khoảng ${(estimate.bytes / 1048576).toStringAsFixed(1)} MiB\nDữ liệu đã lưu và ảnh/PDF sẽ được tải lên S3. Bạn có thể rời màn hình để tiếp tục học.\nGiới hạn: 100 MiB, 1.000 tệp, 5 bản mỗi kho, thời gian chờ 10 phút.',
-      'Sao lưu',
-    )) {
-      await c.backup();
-    }
-  }
-
   Future<void> _signOut() => _run(() async {
-    if (c.workspace.record.ownerUid != null && await c.hasChanges()) {
+    if (await c.sync.hasPending) {
       if (!mounted) return;
       final choice = await showDialog<String>(
         context: context,
         builder: (context) => AlertDialog(
-          title: const Text('Có dữ liệu chưa sao lưu'),
+          title: const Text('Có thay đổi chưa đồng bộ'),
           content: const Text(
-            'Dữ liệu riêng sẽ được giữ trên thiết bị và ẩn sau đăng xuất.',
+            'Thay đổi chưa gửi vẫn được giữ trên thiết bị sau khi đăng xuất.',
           ),
           actions: [
             TextButton(
@@ -149,19 +146,27 @@ class _AccountBackupScreenState extends State<AccountBackupScreen> {
               child: const Text('Hủy'),
             ),
             TextButton(
-              onPressed: () => Navigator.pop(context, 'backup'),
-              child: const Text('Tiếp tục sao lưu'),
+              onPressed: () => Navigator.pop(context, 'keep'),
+              child: const Text('Đăng xuất và giữ trên thiết bị'),
             ),
             FilledButton(
-              onPressed: () => Navigator.pop(context, 'logout'),
-              child: const Text('Đăng xuất'),
+              onPressed: () => Navigator.pop(context, 'sync'),
+              child: const Text('Đồng bộ rồi đăng xuất'),
             ),
           ],
         ),
       );
-      if (choice != 'logout') {
-        if (choice == 'backup') await _backup();
-        return;
+      if (choice == null) return;
+      if (choice == 'sync') {
+        await c.sync.syncNow();
+        if (await c.sync.hasPending || c.sync.error != null) {
+          if (mounted) {
+            _notice(
+              'Chưa đồng bộ xong. Hãy thử lại hoặc đăng xuất và giữ trên thiết bị.',
+            );
+          }
+          return;
+        }
       }
     }
     await c.signOut();
@@ -259,7 +264,7 @@ class _AccountBackupScreenState extends State<AccountBackupScreen> {
       final account = c.account;
       if (!c.accessAllowed) {
         return Scaffold(
-          appBar: AppBar(title: const Text('Tài khoản và sao lưu')),
+          appBar: AppBar(title: const Text('Tài khoản và đồng bộ')),
           body: ListView(
             padding: const EdgeInsets.all(20),
             children: [
@@ -287,7 +292,7 @@ class _AccountBackupScreenState extends State<AccountBackupScreen> {
         );
       }
       return Scaffold(
-        appBar: AppBar(title: const Text('Tài khoản và sao lưu')),
+        appBar: AppBar(title: const Text('Tài khoản và đồng bộ')),
         body: ListView(
           padding: const EdgeInsets.all(20),
           children: [
@@ -380,7 +385,7 @@ class _AccountBackupScreenState extends State<AccountBackupScreen> {
               Text(
                 account.emailVerified
                     ? 'Đã xác minh email'
-                    : 'Xác minh email để sao lưu',
+                    : 'Xác minh email để đồng bộ',
               ),
               if (c.message != null) Text(c.message!),
               if (!account.emailVerified) ...[
@@ -401,149 +406,7 @@ class _AccountBackupScreenState extends State<AccountBackupScreen> {
                   child: const Text('Tôi đã xác minh'),
                 ),
               ],
-              const Divider(),
-              Text(
-                '${c.workspace.record.name} · ${c.workspace.record.ownerUid == null ? 'Kho khách chưa gắn' : 'Kho tài khoản'}',
-              ),
-              FutureBuilder(
-                key: ValueKey(c.workspace.generation),
-                future: c.codec.estimate(c.workspace),
-                builder: (context, snapshot) => Text(
-                  snapshot.hasData
-                      ? '${snapshot.data!.decks} deck · ${snapshot.data!.cards} card · ${snapshot.data!.files} tệp'
-                      : 'Đang đọc kho…',
-                ),
-              ),
-              FutureBuilder(
-                key: ValueKey((account.uid, c.workspace.generation)),
-                future: c.workspaces.available(account.uid),
-                builder: (context, snapshot) => DropdownButton<String>(
-                  isExpanded: true,
-                  value:
-                      snapshot.data?.any(
-                            (w) => w.id == c.workspace.record.id,
-                          ) ==
-                          true
-                      ? c.workspace.record.id
-                      : null,
-                  items: snapshot.data
-                      ?.map(
-                        (w) => DropdownMenuItem(
-                          value: w.id,
-                          child: Text(
-                            '${w.name} (${w.ownerUid == null ? 'khách' : account.email})',
-                          ),
-                        ),
-                      )
-                      .toList(),
-                  onChanged: _busy
-                      ? null
-                      : (id) {
-                          if (id != null) {
-                            _run(
-                              () async => c.select(await c.workspaces.get(id)),
-                            );
-                          }
-                        },
-                ),
-              ),
-              if (c.workspace.record.ownerUid == null)
-                OutlinedButton(
-                  onPressed: _busy || !account.emailVerified
-                      ? null
-                      : () => _run(() async {
-                          final estimate = await c.codec.estimate(c.workspace);
-                          if (!mounted) return;
-                          if (await _ask(
-                            'Gắn kho khách?',
-                            '${account.email}\n${estimate.decks} deck · ${estimate.cards} card\nKho này sẽ thuộc tài khoản trên.',
-                            'Gắn và tiếp tục',
-                          )) {
-                            await c.attachGuestWorkspace(
-                              c.workspace.record.id,
-                              account.uid,
-                            );
-                          }
-                        }),
-                  child: const Text('Gắn kho này với tài khoản'),
-                ),
-              Text(c.status),
-              if (c.busy)
-                LinearProgressIndicator(
-                  value: c.progress > 0 ? c.progress : null,
-                ),
-              const Text(
-                '100 MiB · 1.000 tệp · 5 bản/kho · thời gian chờ 10 phút',
-              ),
-              FilledButton.icon(
-                onPressed: c.canBackup && !_busy ? () => _run(_backup) : null,
-                icon: const Icon(Icons.cloud_upload_outlined),
-                label: const Text('Sao lưu ngay / Thử lại'),
-              ),
-              TextButton(
-                onPressed: _busy || c.cloudLoading
-                    ? null
-                    : () => _run(c.refreshCloud),
-                child: const Text('Đối chiếu và tải lại danh sách'),
-              ),
-              if (c.stale)
-                const Text(
-                  'Thông tin cloud cũ; chưa được dịch vụ xác nhận lại.',
-                ),
-              for (final backup in c.backups)
-                ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  title: Text(
-                    backup['status'] == 'ready'
-                        ? 'Bản sao hoàn tất'
-                        : 'Bản sao ${backup['status']}',
-                  ),
-                  subtitle: Text(
-                    'Dữ liệu: ${DateTime.fromMillisecondsSinceEpoch(backup['snapshotAt'] as int).toLocal()}\n${backup['deckCount'] ?? '?'} deck · ${backup['cardCount'] ?? '?'} card · ${((backup['sizeBytes'] as num) / 1048576).toStringAsFixed(1)} MiB${backup['completedAt'] == null ? '' : '\nXác nhận: ${DateTime.fromMillisecondsSinceEpoch(backup['completedAt'] as int).toLocal()}'}',
-                  ),
-                  trailing: PopupMenuButton<String>(
-                    enabled: !_busy,
-                    onSelected: (action) => _run(() async {
-                      if (action == 'delete') {
-                        if (await _ask(
-                          'Xóa bản sao?',
-                          'Chỉ xóa bản cloud đã chọn; dữ liệu học trên thiết bị được giữ.',
-                          'Xóa',
-                        )) {
-                          await c.deleteBackup(backup);
-                        }
-                      } else {
-                        if (!await _ask(
-                          'Khôi phục vào kho mới?',
-                          'Giữ nguyên kho đang học. Ngày dữ liệu: ${DateTime.fromMillisecondsSinceEpoch(backup['snapshotAt'] as int).toLocal()}',
-                          'Khôi phục vào kho mới',
-                        )) {
-                          return;
-                        }
-                        final restored = await c.restore(backup);
-                        if (!mounted) return;
-                        if (await _ask(
-                          'Đã khôi phục',
-                          'Chuyển sang kho vừa khôi phục?',
-                          'Chuyển kho',
-                        )) {
-                          await c.select(restored);
-                        }
-                      }
-                    }),
-                    itemBuilder: (_) => [
-                      if (backup['status'] == 'ready')
-                        const PopupMenuItem(
-                          value: 'restore',
-                          child: Text('Khôi phục'),
-                        ),
-                      const PopupMenuItem(
-                        value: 'delete',
-                        child: Text('Xóa bản sao'),
-                      ),
-                    ],
-                  ),
-                ),
+              SyncAccountPanel(controller: c, run: _run),
               if (!account.providers.contains('google.com'))
                 TextButton(
                   onPressed: _busy ? null : () => _link(true),

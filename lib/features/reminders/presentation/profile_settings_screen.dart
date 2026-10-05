@@ -31,7 +31,7 @@ class ProfileSettingsScreen extends StatelessWidget {
                     if (account != null)
                       ListTile(
                         leading: const Icon(Icons.cloud_upload_outlined),
-                        title: const Text('Tài khoản và sao lưu'),
+                        title: const Text('Tài khoản và đồng bộ'),
                         trailing: const Icon(Icons.chevron_right),
                         onTap: () => Navigator.of(context).push(
                           MaterialPageRoute<void>(

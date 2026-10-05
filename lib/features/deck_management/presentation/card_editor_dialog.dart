@@ -10,10 +10,12 @@ class CardEditorDialog extends StatefulWidget {
     required this.repository,
     required this.deckId,
     this.card,
+    this.onSaveContent,
   });
   final DeckRepository repository;
   final String deckId;
   final CardEntity? card;
+  final Future<void> Function(CardContent)? onSaveContent;
   static Future<bool> show(
     BuildContext context, {
     required DeckRepository repository,
@@ -87,7 +89,9 @@ class _CardEditorDialogState extends State<CardEditorDialog> {
     if (_errors.isNotEmpty) return;
     setState(() => _busy = true);
     try {
-      if (widget.card == null) {
+      if (widget.onSaveContent != null) {
+        await widget.onSaveContent!(content);
+      } else if (widget.card == null) {
         await widget.repository.createManualCard(
           deckId: widget.deckId,
           content: content,

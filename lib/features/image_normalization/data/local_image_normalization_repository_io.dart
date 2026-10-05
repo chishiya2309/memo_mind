@@ -159,7 +159,7 @@ class LocalImageNormalizationRepository
         'contrast': parameters.contrast,
         'updated_at': now.millisecondsSinceEpoch,
       };
-      await db.transaction((txn) async {
+      await _database.studyTransaction((txn) async {
         await txn.insert(
           'page_normalizations',
           values,

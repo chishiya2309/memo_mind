@@ -21,6 +21,9 @@ class LocalReviewRepository implements ReviewRepository {
   }) : _database = database ?? WorkspaceRuntime.database,
        _clock = clock ?? DateTime.now;
   final MemoMindDatabase _database;
+  Future<bool> _hasSync(DatabaseExecutor db) async => (await db.rawQuery(
+    "SELECT name FROM sqlite_master WHERE name='sync_control'",
+  )).isNotEmpty;
   final DateTime Function() _clock;
   static const _uuid = Uuid();
   static const _scheduler = Sm2Scheduler();
@@ -215,17 +218,17 @@ class LocalReviewRepository implements ReviewRepository {
 
   @override
   Future<ReviewSnapshot> loadSession(String sessionId) async {
-    final db = await _database.database;
-    return db.transaction((txn) => _load(txn, sessionId));
+    return _database.studyTransaction((txn) => _load(txn, sessionId));
   }
 
   @override
   Future<ReviewSnapshot?> getActiveSession() async {
-    final db = await _database.database;
-    return db.transaction((txn) async {
+    return _database.studyTransaction((txn) async {
       final rows = await txn.query(
         'review_sessions',
-        where: "status='active'",
+        where: await _hasSync(txn)
+            ? "status='active' AND is_local=1"
+            : "status='active'",
         limit: 1,
       );
       if (rows.isEmpty) return null;
@@ -240,11 +243,12 @@ class LocalReviewRepository implements ReviewRepository {
     String? deckId,
     String? cardId,
   }) async {
-    final db = await _database.database;
-    return db.transaction((txn) async {
+    return _database.studyTransaction((txn) async {
       final active = await txn.query(
         'review_sessions',
-        where: "status='active'",
+        where: await _hasSync(txn)
+            ? "status='active' AND is_local=1"
+            : "status='active'",
         limit: 1,
       );
       if (active.isNotEmpty) {
@@ -274,6 +278,7 @@ class LocalReviewRepository implements ReviewRepository {
         'status': 'active',
         'created_at': now.millisecondsSinceEpoch,
         'updated_at': now.millisecondsSinceEpoch,
+        if (await _hasSync(txn)) 'device_id': WorkspaceRuntime.deviceId ?? '',
       });
       return _load(txn, id);
     });
@@ -287,8 +292,7 @@ class LocalReviewRepository implements ReviewRepository {
     required DateTime reviewedAt,
     required ReviewRating rating,
   }) async {
-    final db = await _database.database;
-    final result = await db.transaction((txn) async {
+    final result = await _database.studyTransaction((txn) async {
       final existing = await txn.query(
         'review_events',
         where: 'event_id=?',
@@ -331,7 +335,27 @@ class LocalReviewRepository implements ReviewRepository {
         'device_id': WorkspaceRuntime.deviceId ?? device,
         'reviewed_at': reviewedAt.millisecondsSinceEpoch,
         'rating': rating.name,
+        if (await _hasSync(txn))
+          'schedule_after': jsonEncode({
+            'repetitions': schedule.repetitions,
+            'interval_days': schedule.intervalDays,
+            'ease_factor': schedule.easeFactor,
+            'due_date': schedule.nextReviewAt.millisecondsSinceEpoch,
+          }),
       });
+      if (await _hasSync(txn)) {
+        await txn.insert('card_schedules', {
+          'card_id': cardId,
+          'repetitions': schedule.repetitions,
+          'interval_days': schedule.intervalDays,
+          'ease_factor': schedule.easeFactor,
+          'due_date': schedule.nextReviewAt.millisecondsSinceEpoch,
+          'reviewed_at': reviewedAt.millisecondsSinceEpoch,
+          'device_id': WorkspaceRuntime.deviceId ?? device,
+          'event_id': eventId,
+          'scheduler_version': 'sm2-v1',
+        }, conflictAlgorithm: ConflictAlgorithm.replace);
+      }
       await txn.update(
         'cards',
         {
@@ -365,14 +389,13 @@ class LocalReviewRepository implements ReviewRepository {
       );
       return _load(txn, sessionId);
     });
-    _database.notifyStudyChanged();
+    await _database.notifyLegacyStudyChanged();
     return result;
   }
 
   @override
   Future<ReviewSnapshot> endSession(String sessionId) async {
-    final db = await _database.database;
-    return db.transaction((txn) async {
+    return _database.studyTransaction((txn) async {
       await txn.update(
         'review_sessions',
         {'status': 'ended', 'updated_at': _clock().millisecondsSinceEpoch},
