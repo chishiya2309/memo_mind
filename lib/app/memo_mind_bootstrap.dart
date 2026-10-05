@@ -36,8 +36,8 @@ class _MemoMindBootstrapState extends State<MemoMindBootstrap> {
     try {
       AuthRepository auth = const UnconfiguredAuthRepository();
       const project = String.fromEnvironment('FIREBASE_PROJECT_ID');
-      if (project.isNotEmpty) {
-        try {
+      try {
+        if (project.isNotEmpty) {
           await Firebase.initializeApp(
             options: const FirebaseOptions(
               apiKey: String.fromEnvironment('FIREBASE_API_KEY'),
@@ -46,10 +46,13 @@ class _MemoMindBootstrapState extends State<MemoMindBootstrap> {
               projectId: project,
             ),
           );
-          auth = FirebaseAuthRepository(FirebaseAuth.instance);
-        } catch (_) {
-          /* Cloud setup cannot prevent offline learning. */
+        } else {
+          // Android resources are generated from google-services.json by Gradle.
+          await Firebase.initializeApp();
         }
+        auth = FirebaseAuthRepository(FirebaseAuth.instance);
+      } catch (_) {
+        /* Cloud setup cannot prevent offline learning. */
       }
       final workspaces = WorkspaceRepository();
       await workspaces.initialize(uid: auth.current?.uid);

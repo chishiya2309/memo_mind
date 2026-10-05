@@ -3,6 +3,10 @@
 *.log
 *.pyc
 *.swp
+*.tmp
+*.bak
+# Microsoft Office lock files; keep actual project documents.
+~$*
 .DS_Store
 .atom/
 .build/
@@ -52,8 +56,27 @@ app.*.map.json
 .env.*
 !.env.example
 **/serviceAccountKey.json
-**/service-account*.json
-**/firebase-adminsdk-*.json
+**/serviceAccount*.json
+**/*service-account*.json
+# Includes firebase-admin.json and downloaded PROJECT-firebase-adminsdk-*.json.
+**/*firebase-admin*.json
+**/client_secret*.json
+/secrets/
+/functions/secrets/
+.aws/
+
+# Private signing keys and certificates, wherever they are stored.
+key.properties
+*.keystore
+*.jks
+*.pem
+*.key
+*.p12
+*.pfx
+# Intentionally shared development key; never use it for production.
+!/android/keystore/team-debug.keystore
+# Firebase Android client configuration is shared, not an Admin private key.
+!/android/app/google-services.json
 
 # Node.js / Backend functions
 **/node_modules/
@@ -74,4 +97,8 @@ android/local.properties
 *.apk
 *.aab
 config/*.local.json
+
+# JVM crash dumps (crash/replay text logs are already covered by *.log).
+*.hprof
+*.dmp
 

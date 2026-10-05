@@ -1,15 +1,15 @@
 # Tạo và nối Firebase + Amazon S3 cho FR18
 
-Backend là Express trong `functions/`, ứng dụng Android hiện có package `com.example.memo_mind`. Chưa có Firebase project, bucket hoặc backend HTTPS được tạo cho lần triển khai này. Kiểm thử với adapter giả và Firestore Emulator không thay thế nghiệm thu cloud thật.
+Backend là Express trong `functions/`, ứng dụng Android hiện có package `vn.edu.hcmute.memo_mind`. Các bước dưới đây hướng dẫn cấu hình Firebase, S3 và backend; kết nối cloud thật cần được kiểm chứng sau khi nối. Kiểm thử với adapter giả và Firestore Emulator không thay thế nghiệm thu cloud thật.
 
 ## 1. Tạo Firebase project
 
 1. Mở [Firebase Console](https://console.firebase.google.com/), chọn **Add project**, tạo project mới. Analytics không bắt buộc cho FR18. Ghi lại **Project ID** trong Project settings.
-2. Thêm Android app với package `com.example.memo_mind`. Nếu đổi applicationId thì đăng ký đúng package mới.
-3. Trong thư mục `android`, chạy `.\gradlew.bat signingReport`, lấy SHA-1/SHA-256 và thêm vào Android app trên Firebase. Release hiện ký bằng debug key; khi dùng release key riêng phải thêm SHA của key đó.
+2. Thêm Android app với package `vn.edu.hcmute.memo_mind`. Nếu đã đăng ký package cũ, thêm Android app mới trong cùng Firebase project; không tạo lại Auth, Firestore hoặc S3. Thêm SHA cho app mới và tải cấu hình mới vào `android/app/google-services.json`. Nếu dùng Dart define thay cho cấu hình Android, cập nhật `config/fr18.local.json`, đặc biệt `FIREBASE_ANDROID_APP_ID` theo app mới. Xem [đăng ký Android app](https://firebase.google.com/docs/android/setup).
+3. Repo dùng chung `android/keystore/team-debug.keystore` cho debug, profile và APK release cài trực tiếp để demo. Đây là bản sao debug key hiện có của người thiết lập, có SHA-1/SHA-256 đã đăng ký Firebase cho package `vn.edu.hcmute.memo_mind`. Thành viên clone repo không cần chạy lệnh lấy SHA hoặc thêm SHA của máy mình. Giữ nguyên file khóa này; nếu thiếu, khôi phục từ repo thay vì tạo khóa mới. Khi chuyển sang release key riêng hoặc phát hành Google Play, người quản lý cần đăng ký chứng chỉ ký tương ứng, gồm chứng chỉ Play App Signing cho bản do Google Play phân phối.
 4. **Authentication → Sign-in method**: bật **Email/Password** và **Google**, chọn email hỗ trợ. Nếu bật Password policy, đặt minimum length 8, không thêm điều kiện ngoài đặc tả. Login không bị client áp lại chính sách mật khẩu mới.
 5. **Authentication → Templates**: kiểm tra email verification/password reset và tên ứng dụng. Người dùng mở liên kết Firebase, quay lại MemoMind và chọn **Tôi đã xác minh** để reload user và refresh token.
-6. Sau khi bật Google và thêm SHA, tải lại `google-services.json`. Lấy cấu hình công khai cho Flutter:
+6. Người quản lý tải lại `google-services.json` sau khi bật Google và đăng ký SHA, rồi cập nhật file tại `android/app/` trong repo. Thành viên clone dùng file đã chia sẻ, không cần cấu hình Firebase riêng. Lấy cấu hình công khai cho Flutter khi cần dùng Dart define:
 
    | Dart define | Giá trị |
    |---|---|
@@ -19,7 +19,13 @@ Backend là Express trong `functions/`, ứng dụng Android hiện có package 
    | `FIREBASE_API_KEY` | Client đúng package → `api_key[0].current_key` |
    | `GOOGLE_SERVER_CLIENT_ID` | OAuth **Web application** client ID (`client_type: 3`) |
 
-Mã dùng `FirebaseOptions` và truyền Web client ID cho Google Sign-In; không cần thêm Google Services Gradle plugin. Không dùng Android OAuth client ID thay cho Web client ID. Đây là cấu hình client, không phải Firebase Admin private key. Xem [Flutter setup](https://firebase.google.com/docs/flutter/setup) và [Google Sign-In Android](https://pub.dev/packages/google_sign_in_android).
+Cách build Android thuận tiện: đặt `google-services.json` ở `android/app/`. Project khai báo Google Services plugin 4.5.0 trong `android/settings.gradle.kts`, áp dụng tại app khi file có mặt và khởi tạo Firebase từ Android resources. Nếu JSON có Web OAuth client (`client_type: 3`), Google Sign-In tự đọc client ID đó. Khi dùng cách này, để trống bốn biến `FIREBASE_*` và `GOOGLE_SERVER_CLIENT_ID` trong config Flutter; chỉ cần điền `BACKEND_BASE_URL`. Nếu khai báo `FIREBASE_PROJECT_ID`, mã vẫn dùng `FirebaseOptions` từ cả bốn biến `FIREBASE_*`; các giá trị phải khớp file Android. Firebase SDK/BoM được quản lý bởi các FlutterFire plugin trong `pubspec.yaml`, không cần thêm dependency Analytics native cho FR18. Không dùng Android OAuth client ID thay cho Web client ID. Đây là cấu hình client, không phải Firebase Admin private key. Xem [Flutter setup](https://firebase.google.com/docs/flutter/setup) và [Google Sign-In Android](https://pub.dev/packages/google_sign_in_android).
+
+### Clone và cài APK trong nhóm
+
+Repo phân phối cả debug keystore chung và Firebase Android client config. Sau khi cài Flutter/Android SDK, thành viên chạy `flutter pub get` và build/run bình thường; debug/profile và APK release demo đều dùng chứng chỉ chung. Đường dẫn keystore tương đối với repo, không phụ thuộc tên người dùng, hệ điều hành hoặc ổ đĩa. Nếu file khóa bị thiếu, Gradle báo lỗi thay vì tự dùng khóa của máy.
+
+Nếu Android từ chối cập nhật vì bản cũ ký bằng khóa khác, xuất dữ liệu cục bộ cần giữ trước khi gỡ bản cũ rồi cài bản nhóm. Gỡ ứng dụng có thể mất dữ liệu; không cần gỡ khi cài mới hoặc chữ ký đã khớp. Khóa chung chỉ dành cho phát triển/demo, không dùng cho phát hành production. Chỉ `android/keystore/team-debug.keystore` được phép đưa vào Git; release keystore, Firebase Admin private key và server secrets vẫn phải giữ ngoài repo.
 
 ## 2. Tạo Firestore và quyền backend
 
@@ -42,7 +48,7 @@ Xem [Admin SDK setup](https://firebase.google.com/docs/admin/setup), [ID token v
 1. AWS Console → **S3 → Create bucket**: General purpose, region **Asia Pacific (Singapore), `ap-southeast-1`**, tên bucket duy nhất của bạn.
 2. Giữ **Bucket owner enforced**, bật cả bốn mục **Block Public Access**, mã hóa mặc định **SSE-S3**, dùng S3 Standard. Nếu chuyển sang SSE-KMS phải cấp thêm quyền KMS cho backend.
 3. Thay mọi `YOUR_BUCKET` trong `fr18-s3-bucket-policy.example.json`, dán vào **Permissions → Bucket policy**. Policy bắt buộc HTTPS và `If-None-Match` cho staging/ready. Flutter chỉ nhận URL PUT staging; backend copy gói đã kiểm tra sang ready. Xem [conditional writes](https://docs.aws.amazon.com/AmazonS3/latest/userguide/conditional-writes.html).
-4. Tạo IAM policy từ `fr18-s3-iam-policy.example.json`, thay `YOUR_BUCKET`. Gắn policy vào **IAM role** của EC2/ECS nếu backend chạy trên AWS. Chạy local/ngoài AWS thì dùng IAM user riêng cho backend và secret store; không dùng root access key.
+4. Tạo IAM policy từ `fr18-s3-iam-policy.example.json`, thay `YOUR_BUCKET`. Gắn policy vào **IAM role** của EC2/ECS nếu backend chạy trên AWS. Chạy local/ngoài AWS thì dùng IAM user riêng cho backend và secret store; không dùng root access key. Dùng bucket riêng cho FR18: policy cho phép `ListBucket` trên bucket đó để `HeadObject` nhận 404 khi object chưa tồn tại; quyền đọc/ghi/xóa object vẫn chỉ ở `staging/` và `ready/`. Không giới hạn `ListBucket` bằng `s3:prefix` vì request HEAD không gửi prefix và có thể bị trả 403. Xem [quyền HeadObject](https://docs.aws.amazon.com/AmazonS3/latest/API/API_HeadObject.html).
 5. Tạo lifecycle rule chỉ cho prefix `staging/`: expire sau **1 ngày**. URL đã cấp có thể còn hiệu lực 10 phút sau khi hủy job; lifecycle dọn staging mồ côi. Không expire `ready/`.
 6. Android native không cần S3 CORS. Không bật website/public access cho bucket.
 
@@ -53,7 +59,7 @@ Firestore, S3 và host Express có thể phát sinh phí. Thiết lập budget a
 Node.js 22 trở lên. Từ gốc repo:
 
 ```powershell
-Copy-Item functions/.env.example functions/.env
+if (!(Test-Path functions/.env)) { Copy-Item functions/.env.example functions/.env }
 Set-Location functions
 npm ci
 ```
@@ -97,7 +103,17 @@ Repo không tự tạo hostname, tài khoản thanh toán hay dịch vụ trả 
 
 ## 6. Nối Flutter
 
-Từ gốc repo, copy `config/fr18.example.json` thành `config/fr18.local.json` (đã gitignore). Điền cấu hình bước 1 và URL backend:
+Từ gốc repo, copy `config/fr18.example.json` thành `config/fr18.local.json` (đã gitignore). Nếu đã đặt `google-services.json` đúng package và có Web OAuth client, cấu hình đơn giản cho Android Emulator là:
+
+```json
+{
+  "BACKEND_BASE_URL": "http://10.0.2.2:8080"
+}
+```
+
+Các biến `FIREBASE_*` và `GOOGLE_SERVER_CLIENT_ID` không cần khai báo với cách này. Sau khi thay `google-services.json`, dừng ứng dụng và build lại; hot reload không cập nhật Android resources.
+
+Nếu muốn dùng Dart define, điền đầy đủ cấu hình bước 1 và URL backend:
 
 ```json
 {
@@ -116,7 +132,7 @@ flutter run --dart-define-from-file=config/fr18.local.json
 flutter build apk --release --dart-define-from-file=config/fr18.local.json
 ```
 
-Không đưa Admin JSON, AWS secrets, Groq/Gemini key vào dart-define. Thiếu Firebase config vẫn mở kho offline. Backup client không mặc định gửi token tới URL backend AI có sẵn.
+Không đưa Admin JSON, AWS secrets, Groq/Gemini key vào dart-define. Khi thiếu cả cấu hình Android lẫn Dart define, ứng dụng vẫn mở kho offline. Backup client không mặc định gửi token tới URL backend AI có sẵn.
 
 ## 7. Nghiệm thu cloud thật
 
