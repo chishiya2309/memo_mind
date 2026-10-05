@@ -12,6 +12,8 @@ import '../../../shared/theme/memo_theme.dart';
 import '../domain/home_dashboard_data.dart';
 import 'home_formatters.dart';
 import 'home_sections.dart';
+import '../../sync/application/sync_controller.dart';
+import '../../sync/presentation/sync_widgets.dart';
 
 class HomeActions {
   const HomeActions({
@@ -56,6 +58,7 @@ class HomeScreen extends StatefulWidget {
     this.statisticsController,
     this.statisticsRouteObserver,
     this.onOpenDueCards,
+    this.syncController,
   });
 
   final HomeDashboardData data;
@@ -66,6 +69,7 @@ class HomeScreen extends StatefulWidget {
   final StatisticsController? statisticsController;
   final RouteObserver<ModalRoute<void>>? statisticsRouteObserver;
   final Future<void> Function()? onOpenDueCards;
+  final SyncController? syncController;
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -153,10 +157,17 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
                 statisticsController: widget.statisticsController,
                 onStatistics: () => _selectTab(2),
                 onOpenDueCards: widget.onOpenDueCards ?? () async {},
+                syncController: widget.syncController,
               )
             : selectedTab == 1
             ? LibraryDecksScreen(
                 repository: _libraryRepository,
+                syncAction: widget.syncController == null
+                    ? null
+                    : SyncStatusButton(
+                        controller: widget.syncController!,
+                        onSignIn: widget.actions.onOpenProfile,
+                      ),
                 onOpenDeck: widget.actions.onOpenDeck,
                 onOpenDeckAsync: widget.onOpenDeckAsync,
                 onChanged: widget.actions.onRetryLoad,
@@ -201,6 +212,7 @@ class _HomeDashboard extends StatelessWidget {
     required this.statisticsController,
     required this.onStatistics,
     required this.onOpenDueCards,
+    this.syncController,
   });
 
   final HomeDashboardData data;
@@ -209,6 +221,7 @@ class _HomeDashboard extends StatelessWidget {
   final StatisticsController? statisticsController;
   final VoidCallback onStatistics;
   final Future<void> Function() onOpenDueCards;
+  final SyncController? syncController;
 
   @override
   Widget build(BuildContext context) {
@@ -225,7 +238,11 @@ class _HomeDashboard extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    _BrandBar(data: data, onProfile: actions.onOpenProfile),
+                    _BrandBar(
+                      data: data,
+                      onProfile: actions.onOpenProfile,
+                      syncController: syncController,
+                    ),
                     const SizedBox(height: 18),
                     Text(
                       '${greetingFor(data.now)}${data.displayName == null || data.displayName!.trim().isEmpty ? '' : ', ${data.displayName!.trim()}'}',
@@ -321,10 +338,15 @@ class _HomeDashboard extends StatelessWidget {
 }
 
 class _BrandBar extends StatelessWidget {
-  const _BrandBar({required this.data, required this.onProfile});
+  const _BrandBar({
+    required this.data,
+    required this.onProfile,
+    this.syncController,
+  });
 
   final HomeDashboardData data;
   final VoidCallback onProfile;
+  final SyncController? syncController;
 
   @override
   Widget build(BuildContext context) {
@@ -356,6 +378,8 @@ class _BrandBar extends StatelessWidget {
               style: Theme.of(context).textTheme.titleLarge,
             ),
           ),
+          if (syncController != null)
+            SyncStatusButton(controller: syncController!, onSignIn: onProfile),
           Semantics(
             label: 'Tài khoản, $statusText',
             button: true,

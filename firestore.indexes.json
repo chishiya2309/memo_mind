@@ -1,0 +1,13 @@
+{
+  "indexes": [],
+  "fieldOverrides": [
+    {"collectionGroup": "entities", "fieldPath": "data", "indexes": []},
+    {"collectionGroup": "entities", "fieldPath": "fieldVersions", "indexes": []},
+    {"collectionGroup": "changes", "fieldPath": "data", "indexes": []},
+    {"collectionGroup": "changes", "fieldPath": "fieldVersions", "indexes": []},
+    {"collectionGroup": "staging", "fieldPath": "operations", "indexes": []},
+    {"collectionGroup": "receipts", "fieldPath": "result", "indexes": []},
+    {"collectionGroup": "conflicts", "fieldPath": "local", "indexes": []},
+    {"collectionGroup": "conflicts", "fieldPath": "remote", "indexes": []}
+  ]
+}

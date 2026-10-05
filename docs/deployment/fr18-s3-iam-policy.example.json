@@ -4,7 +4,7 @@
     {
       "Effect": "Allow",
       "Action": ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"],
-      "Resource": ["arn:aws:s3:::YOUR_BUCKET/staging/*", "arn:aws:s3:::YOUR_BUCKET/ready/*"]
+      "Resource": ["arn:aws:s3:::YOUR_BUCKET/staging/*", "arn:aws:s3:::YOUR_BUCKET/ready/*", "arn:aws:s3:::YOUR_BUCKET/sync/*"]
     },
     {
       "Effect": "Allow",

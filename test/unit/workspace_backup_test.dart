@@ -285,6 +285,98 @@ void main() {
       throwsA(isA<AccountFailure>()),
     );
   });
+  test(
+    'v9 snapshots restore into v10 without replaying old review history',
+    () async {
+      await attach();
+      await seed();
+      final db = await workspaces.current!.database.database;
+      await db.update('cards', {
+        'repetitions': 4,
+        'interval_days': 21,
+        'ease_factor': 2.2,
+        'due_date': 9999,
+      });
+      final codec = SnapshotCodec(),
+          snapshot = await codec.capture(workspaces.current!, 'A');
+      final archive = ZipDecoder().decodeBytes(
+        await File(snapshot.path).readAsBytes(),
+      );
+      final tables =
+          (jsonDecode(utf8.decode(archive.find('data.json')!.content))
+                  as Map)['tables']
+              as Map;
+      tables.remove('card_schedules');
+      for (final row in tables['review_sessions'] as List) {
+        (row as Map).remove('device_id');
+        row.remove('is_local');
+      }
+      for (final row in tables['review_events'] as List) {
+        (row as Map).remove('schedule_after');
+        row.remove('scheduler_version');
+      }
+      final dataBytes = utf8.encode(canonicalJson({'tables': tables}));
+      final manifest = jsonDecode(
+        utf8.decode(archive.find('manifest.json')!.content),
+      ) as Map<String, dynamic>;
+      manifest['schemaVersion'] = 9;
+      manifest['dataHash'] = contentHash(dataBytes);
+      manifest['fingerprint'] = contentHash(
+        utf8.encode(
+          canonicalJson({
+            'schemaVersion': 9,
+            'schedulerVersion': 'sm2-v1',
+            'dataHash': manifest['dataHash'],
+            'files': manifest['files'],
+          }),
+        ),
+      );
+      final manifestBytes = utf8.encode(canonicalJson(manifest));
+      final legacy = Archive();
+      for (final file in archive) {
+        if (!['data.json', 'manifest.json'].contains(file.name)) {
+          legacy.addFile(file);
+        }
+      }
+      legacy.addFile(ArchiveFile('data.json', dataBytes.length, dataBytes));
+      legacy.addFile(
+        ArchiveFile('manifest.json', manifestBytes.length, manifestBytes),
+      );
+      final file = File(p.join(root.path, 'v9.zip'));
+      await file.writeAsBytes(ZipEncoder().encode(legacy));
+      final restored = await codec.restore(
+        file,
+        {
+          ...snapshot.request,
+          'schemaVersion': 9,
+          'fingerprint': manifest['fingerprint'],
+          'manifestHash': contentHash(manifestBytes),
+          'bundleHash': await fileHash(file),
+          'sizeBytes': await file.length(),
+          'status': 'ready',
+        },
+        'A',
+        workspaces,
+      );
+      final context = WorkspaceContext(restored, -12);
+      try {
+        final restoredDb = await context.database.database;
+        final schedule = (await restoredDb.query('card_schedules')).single;
+        expect(schedule['repetitions'], 4);
+        expect(schedule['interval_days'], 21);
+        expect(schedule['due_date'], 9999);
+        expect(schedule['reviewed_at'], 100);
+        expect(await restoredDb.query('sync_outbox'), isEmpty);
+        expect(
+          (await restoredDb.query('review_events')).single['event_id'],
+          'event',
+        );
+      } finally {
+        await context.revoke();
+      }
+    },
+  );
+
   test('pinned source deletion waits for snapshot release', () async {
     final file = File(p.join(root.path, 'pinned'))..writeAsStringSync('source');
     SourceFilePins.pin(file.path);
@@ -293,6 +385,56 @@ void main() {
     await SourceFilePins.release(file.path);
     expect(await file.exists(), isFalse);
   });
+  test(
+    'v9 database migration preserves the existing schedule baseline',
+    () async {
+      final path = p.join(root.path, 'v9.db');
+      final old = await databaseFactoryFfi.openDatabase(
+        path,
+        options: OpenDatabaseOptions(
+          version: 9,
+          onCreate: (db, _) => MemoMindDatabase.createV9(db),
+        ),
+      );
+      await old.insert('decks', {
+        'deck_id': 'd',
+        'title': 'Old',
+        'created_at': 1,
+        'updated_at': 1,
+      });
+      await old.insert('cards', {
+        'card_id': 'c',
+        'deck_id': 'd',
+        'type': 'BASIC',
+        'front': 'Question',
+        'back': 'Answer',
+        'source_quote': '',
+        'status': 'active',
+        'repetitions': 4,
+        'interval_days': 21,
+        'ease_factor': 2.2,
+        'due_date': 9999,
+        'created_at': 1,
+        'updated_at': 1,
+      });
+      await old.close();
+      final migrated = MemoMindDatabase.atPath(path);
+      try {
+        final db = await migrated.database;
+        expect(await db.getVersion(), 10);
+        final baseline = (await db.query('card_schedules')).single;
+        expect(baseline['repetitions'], 4);
+        expect(baseline['interval_days'], 21);
+        expect(baseline['ease_factor'], 2.2);
+        expect(baseline['due_date'], 9999);
+        expect(baseline['reviewed_at'], 0);
+        expect(await db.query('sync_outbox'), isEmpty);
+      } finally {
+        await migrated.close();
+      }
+    },
+  );
+
   test('v8 upgrade preserves legacy data and device identity', () async {
     final legacyRoot = p.join(root.path, 'migration');
     await Directory(legacyRoot).create(recursive: true);
@@ -322,7 +464,7 @@ void main() {
     expect((await LocalDeckRepository().getDecks()).single.id, 'legacy');
     expect(WorkspaceRuntime.deviceId, 'existing-device');
     final db = await migrated.current!.database.database;
-    expect(await db.getVersion(), 9);
+    expect(await db.getVersion(), 10);
     expect((await db.query('workspace_revision')).single['revision'], 0);
     await migrated.close();
     WorkspaceRuntime.current = workspaces.current;

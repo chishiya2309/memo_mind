@@ -138,8 +138,7 @@ class LocalDocumentImportRepository
       await finalFile.parent.create(recursive: true);
       await stagingFile.rename(finalFile.path);
 
-      final db = await _database.database;
-      await db.transaction((txn) async {
+      await _database.studyTransaction((txn) async {
         if (createDocument) {
           await txn.insert('documents', {
             'document_id': documentId,
@@ -267,8 +266,7 @@ class LocalDocumentImportRepository
         storedPages.add((page: page, pageId: pageId, path: relativePath));
       }
 
-      final db = await _database.database;
-      await db.transaction((txn) async {
+      await _database.studyTransaction((txn) async {
         await txn.insert('documents', {
           'document_id': documentId,
           'title': _pdfTitle(candidate.originalName),
@@ -543,7 +541,7 @@ class LocalDocumentImportRepository
       }
     }
 
-    await db.transaction((txn) async {
+    await _database.studyTransaction((txn) async {
       for (final pageId in missingNormalizations) {
         await txn.delete(
           'page_normalizations',

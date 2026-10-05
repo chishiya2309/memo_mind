@@ -14,7 +14,7 @@
       "Effect": "Deny",
       "Principal": "*",
       "Action": "s3:PutObject",
-      "Resource": ["arn:aws:s3:::YOUR_BUCKET/staging/*", "arn:aws:s3:::YOUR_BUCKET/ready/*"],
+      "Resource": ["arn:aws:s3:::YOUR_BUCKET/staging/*", "arn:aws:s3:::YOUR_BUCKET/ready/*", "arn:aws:s3:::YOUR_BUCKET/sync/*"],
       "Condition": { "Null": { "s3:if-none-match": "true" } }
     }
   ]

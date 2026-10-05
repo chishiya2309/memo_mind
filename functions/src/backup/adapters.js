@@ -8,9 +8,10 @@ class S3Objects {
   }
   async uploadUrl(key, job) {
     const checksum = Buffer.from(job.bundleHash, 'hex').toString('base64');
-    const command = new PutObjectCommand({ Bucket: this.bucket, Key: key, ContentType: 'application/zip', ContentLength: job.sizeBytes, ChecksumSHA256: checksum, IfNoneMatch: '*' });
+    const mimeType = job.mimeType || 'application/zip';
+    const command = new PutObjectCommand({ Bucket: this.bucket, Key: key, ContentType: mimeType, ContentLength: job.sizeBytes, ChecksumSHA256: checksum, IfNoneMatch: '*' });
     const url = await getSignedUrl(this.client, command, { expiresIn: limits.urlSeconds, unhoistableHeaders: new Set(['x-amz-checksum-sha256']), signableHeaders: new Set(['content-type', 'content-length', 'if-none-match']) });
-    return { url, headers: { 'Content-Type': 'application/zip', 'Content-Length': String(job.sizeBytes), 'x-amz-checksum-sha256': checksum, 'If-None-Match': '*' }, expiresAt: Date.now() + limits.urlSeconds * 1000 };
+    return { url, headers: { 'Content-Type': mimeType, 'Content-Length': String(job.sizeBytes), 'x-amz-checksum-sha256': checksum, 'If-None-Match': '*' }, expiresAt: Date.now() + limits.urlSeconds * 1000 };
   }
   async head(key, { signal } = {}) {
     try { return await this.client.send(new HeadObjectCommand({ Bucket: this.bucket, Key: key, ChecksumMode: 'ENABLED' }), { abortSignal: signal }); }

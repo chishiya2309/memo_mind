@@ -202,7 +202,7 @@ class SnapshotCodec {
       final fingerprint = contentHash(
         utf8.encode(
           canonicalJson({
-            'schemaVersion': 9,
+            'schemaVersion': 10,
             'schedulerVersion': 'sm2-v1',
             'dataHash': contentHash(dataBytes),
             'files': files,
@@ -215,7 +215,7 @@ class SnapshotCodec {
         'workspaceId': workspace.record.id,
         'snapshotRevision': revision,
         'snapshotAt': at,
-        'schemaVersion': 9,
+        'schemaVersion': 10,
         'schedulerVersion': 'sm2-v1',
         'fingerprint': fingerprint,
         'dataHash': contentHash(dataBytes),
@@ -265,7 +265,7 @@ class SnapshotCodec {
   ) async {
     if (expected['ownerUid'] != uid ||
         expected['status'] != 'ready' ||
-        expected['schemaVersion'] != 9 ||
+        ![9, 10].contains(expected['schemaVersion']) ||
         expected['schedulerVersion'] != 'sm2-v1') {
       throw const AccountFailure(
         'incompatible_backup',
@@ -351,8 +351,11 @@ class SnapshotCodec {
       }
       final data = jsonDecode(utf8.decode(dataBytes)) as Map<String, dynamic>;
       final rawTables = Map<String, dynamic>.from(data['tables'] as Map);
-      if (rawTables.length != MemoMindDatabase.studyTables.length ||
-          MemoMindDatabase.studyTables.any((t) => rawTables[t] is! List)) {
+      final restoreTables = expected['schemaVersion'] == 9
+          ? MemoMindDatabase.studyTablesV9
+          : MemoMindDatabase.studyTables;
+      if (rawTables.length != restoreTables.length ||
+          restoreTables.any((t) => rawTables[t] is! List)) {
         throw const AccountFailure(
           'invalid_data',
           'Bảng dữ liệu không hợp lệ.',
@@ -366,7 +369,7 @@ class SnapshotCodec {
       if (contentHash(
             utf8.encode(
               canonicalJson({
-                'schemaVersion': 9,
+                'schemaVersion': expected['schemaVersion'],
                 'schedulerVersion': 'sm2-v1',
                 'dataHash': contentHash(dataBytes),
                 'files': files,
@@ -410,7 +413,7 @@ class SnapshotCodec {
         }
       }
       final tables = {
-        for (final t in MemoMindDatabase.studyTables)
+        for (final t in restoreTables)
           t: (rawTables[t] as List)
               .map((r) => Map<String, Object?>.from(r as Map))
               .toList(),
@@ -431,10 +434,19 @@ class SnapshotCodec {
       imported = MemoMindDatabase.atPath(record.databasePath);
       final db = await imported.database;
       await db.transaction((txn) async {
-        for (final table in MemoMindDatabase.studyTables) {
+        await txn.update('sync_control', {'applying': 1}, where: 'id=1');
+        for (final table in restoreTables) {
           for (final row in tables[table]!) {
             await txn.insert(table, row);
           }
+        }
+        if (expected['schemaVersion'] == 9) {
+          await txn.execute(
+            '''INSERT INTO card_schedules SELECT card_id,repetitions,interval_days,ease_factor,due_date,
+            COALESCE((SELECT reviewed_at FROM review_events e WHERE e.card_id=c.card_id ORDER BY reviewed_at DESC,device_id DESC,event_id DESC LIMIT 1),0),
+            COALESCE((SELECT device_id FROM review_events e WHERE e.card_id=c.card_id ORDER BY reviewed_at DESC,device_id DESC,event_id DESC LIMIT 1),''),
+            COALESCE((SELECT event_id FROM review_events e WHERE e.card_id=c.card_id ORDER BY reviewed_at DESC,device_id DESC,event_id DESC LIMIT 1),''),'sm2-v1' FROM cards c''',
+          );
         }
         if ((await txn.rawQuery('PRAGMA foreign_key_check')).isNotEmpty) {
           throw const AccountFailure('invalid_data', 'Quan hệ dữ liệu hỏng.');
@@ -446,6 +458,7 @@ class SnapshotCodec {
         await txn.update('workspace_revision', {
           'revision': manifest['snapshotRevision'],
         }, where: 'id=1');
+        await txn.update('sync_control', {'applying': 0}, where: 'id=1');
       });
       await imported.close();
       imported = null;

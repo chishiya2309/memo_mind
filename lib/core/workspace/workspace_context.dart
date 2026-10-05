@@ -134,6 +134,14 @@ class WorkspaceRepository {
         orderBy: 'rowid',
       )).map(WorkspaceRecord.fromRow).toList();
   Future<WorkspaceRecord> preferred(String? uid) async {
+    if (uid != null) {
+      final canonical = await registry.query(
+        'app_settings',
+        where: 'key=?',
+        whereArgs: ['sync.library.$uid'],
+      );
+      if (canonical.isNotEmpty) return get(canonical.single['value'] as String);
+    }
     final records = (await available(uid))
         .where((r) => r.ownerUid == uid)
         .toList();
@@ -145,6 +153,31 @@ class WorkspaceRepository {
     );
     final id = saved.isEmpty ? null : saved.single['workspace_id'];
     return records.firstWhere((r) => r.id == id, orElse: () => records.first);
+  }
+
+  Future<WorkspaceRecord> canonical(String uid) async {
+    final saved = await registry.query(
+      'app_settings',
+      where: 'key=?',
+      whereArgs: ['sync.library.$uid'],
+    );
+    if (saved.isNotEmpty) return get(saved.single['value'] as String);
+    final record = await create(uid, name: 'Thư viện học');
+    await registry.insert('app_settings', {
+      'key': 'sync.library.$uid',
+      'value': record.id,
+    }, conflictAlgorithm: ConflictAlgorithm.ignore);
+    return preferred(uid);
+  }
+
+  Future<bool> isCanonical(WorkspaceRecord record) async {
+    if (record.ownerUid == null) return false;
+    final saved = await registry.query(
+      'app_settings',
+      where: 'key=?',
+      whereArgs: ['sync.library.${record.ownerUid}'],
+    );
+    return saved.isNotEmpty && saved.single['value'] == record.id;
   }
 
   Future<WorkspaceRecord> create(

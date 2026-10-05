@@ -1,6 +1,9 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../../shared/theme/memo_theme.dart';
+import '../../../core/workspace/workspace_context.dart';
 import '../domain/deck_models.dart';
 import '../../home/domain/home_dashboard_data.dart';
 import '../domain/deck_repository.dart';
@@ -14,12 +17,14 @@ class LibraryDecksScreen extends StatefulWidget {
     required this.onOpenDeck,
     this.onOpenDeckAsync,
     this.onChanged,
+    this.syncAction,
   });
 
   final DeckRepository repository;
   final ValueChanged<String> onOpenDeck;
   final Future<void> Function(String)? onOpenDeckAsync;
   final VoidCallback? onChanged;
+  final Widget? syncAction;
 
   @override
   State<LibraryDecksScreen> createState() => _LibraryDecksScreenState();
@@ -30,16 +35,21 @@ class _LibraryDecksScreenState extends State<LibraryDecksScreen> {
   List<Deck> _decks = const [];
   bool _loading = true;
   String? _loadError;
+  StreamSubscription<void>? _changes;
 
   @override
   void initState() {
     super.initState();
     _loadDecks();
+    _changes = WorkspaceRuntime.database.studyChanges.listen((_) {
+      if (mounted) _loadDecks();
+    });
   }
 
   @override
   void dispose() {
     _searchController.dispose();
+    _changes?.cancel();
     super.dispose();
   }
 
@@ -176,6 +186,7 @@ class _LibraryDecksScreenState extends State<LibraryDecksScreen> {
                     onPressed: _createDeck,
                     icon: const Icon(Icons.add_rounded),
                   ),
+                  if (widget.syncAction != null) widget.syncAction!,
                 ],
               ),
               const SizedBox(height: 12),

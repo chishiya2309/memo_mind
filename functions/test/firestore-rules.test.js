@@ -16,5 +16,7 @@ test('Firestore enforces owner, verified email, and denies all client metadata w
     await assertFails(getDoc(doc(environment.unauthenticatedContext().firestore(), 'users/A/backups/one')));
     await assertFails(setDoc(doc(owner, 'users/A/backups/fake-ready'), { ownerUid: 'A', status: 'ready' }));
     await assertFails(getDoc(doc(owner, 'users/A/backupWorkspaces/one')));
+    await assertFails(getDoc(doc(owner, 'users/A/sync/library')));
+    await assertFails(setDoc(doc(owner, 'users/A/sync/library/entities/cards-c'), { data: 'forbidden' }));
   } finally { await environment.cleanup(); }
 });

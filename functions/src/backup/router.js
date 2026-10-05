@@ -35,7 +35,7 @@ function backupRouter(injected) {
         return { value: existing };
       }
       if (workspace.lastFingerprint === requested.fingerprint && workspace.lastReadyId) return { value: { duplicateId: workspace.lastReadyId } };
-      if (workspace.readyCount >= limits.maxReady) fail('backup_quota', 'Đã có 5 bản sao. Hãy chọn bản cần xóa.', 409);
+      if (workspace.readyCount >= limits.maxReady + (requested.automatic ? 1 : 0)) fail('backup_quota', 'Lịch sử khôi phục cần được xoay vòng trước khi tạo thêm.', 409);
       if (workspace.pendingId) fail('backup_busy', 'Kho đang có một tác vụ chưa hoàn tất.', 409);
       const created = { ...requested, ownerUid: req.uid, status: 'uploading', createdAt: Date.now(), completedAt: null };
       return { job: created, workspace: { ...workspace, pendingId: created.backupId }, value: created };

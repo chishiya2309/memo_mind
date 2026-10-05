@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 import 'package:sqflite/sqflite.dart' as sqlite;
@@ -10,6 +11,7 @@ import 'package:memo_mind/features/account_backup/application/account_backup_con
 import 'package:memo_mind/features/account_backup/presentation/account_backup_screen.dart';
 import 'package:memo_mind/features/account_backup/domain/auth_repository.dart';
 import 'package:memo_mind/features/account_backup/data/snapshot_codec.dart';
+import 'package:memo_mind/features/sync/application/sync_controller.dart';
 
 import '../support/account_backup_fakes.dart';
 
@@ -20,6 +22,11 @@ void main() {
   late AccountBackupController controller;
   late FakeBackupApi api;
   setUpAll(() {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(
+          const MethodChannel('memo_mind/connectivity'),
+          (_) async => null,
+        );
     sqfliteFfiInit();
     sqlite.databaseFactory = databaseFactoryFfi;
   });
@@ -36,6 +43,11 @@ void main() {
       auth: auth,
       workspaces: workspaces,
       api: api,
+      syncController: SyncController(
+        auth: auth,
+        workspaces: workspaces,
+        api: FakeSyncApi(auth),
+      ),
     );
   });
   tearDown(() async {
@@ -48,7 +60,7 @@ void main() {
     MaterialApp(home: AccountBackupScreen(controller: controller)),
   );
   Future<void> settleIo(WidgetTester tester) async {
-    for (var i = 0; i < 15; i++) {
+    for (var i = 0; i < 60; i++) {
       await tester.runAsync(
         () => Future<void>.delayed(const Duration(milliseconds: 20)),
       );
@@ -107,6 +119,15 @@ void main() {
     (tester) async {
       auth.verificationFails = true;
       final guest = workspaces.current!.record;
+      await tester.runAsync(() async {
+        final guestDb = await workspaces.current!.database.database;
+        await guestDb.insert('decks', {
+          'deck_id': 'guest-deck',
+          'title': 'Guest lesson',
+          'created_at': 1,
+          'updated_at': 1,
+        });
+      });
       await open(tester);
       await tester.tap(find.text('Tạo tài khoản'));
       await tester.pumpAndSettle();
@@ -118,12 +139,12 @@ void main() {
       expect(auth.registrations, 1);
       expect(auth.suppliedPassword, ' password ');
       expect(workspaces.current!.record.ownerUid, isNull);
-      expect(find.text('Xác minh email để sao lưu'), findsOneWidget);
+      expect(find.text('Xác minh email để đồng bộ'), findsOneWidget);
       expect(find.textContaining('Tài khoản đã tạo.'), findsOneWidget);
       expect(
         tester
-            .widget<OutlinedButton>(
-              find.widgetWithText(OutlinedButton, 'Gắn kho này với tài khoản'),
+            .widget<FilledButton>(
+              find.widgetWithText(FilledButton, 'Đồng bộ ngay'),
             )
             .onPressed,
         isNull,
@@ -131,12 +152,17 @@ void main() {
       await tester.tap(find.text('Tôi đã xác minh'));
       await settleIo(tester);
       expect(find.byType(AlertDialog), findsOneWidget);
-      expect(find.textContaining('a@example.com\n0 deck'), findsOneWidget);
-      await tester.tap(find.text('Gắn và tiếp tục'));
+      expect(find.textContaining('a@example.com\n1 bộ thẻ'), findsOneWidget);
+      await tester.tap(find.text('Thêm vào tài khoản'));
       await settleIo(tester);
-      expect(workspaces.current!.record.id, guest.id);
+      expect(workspaces.current!.record.id, isNot(guest.id));
       expect(workspaces.current!.record.ownerUid, 'A');
+      expect(
+        (await tester.runAsync(() => workspaces.get(guest.id)))!.ownerUid,
+        isNull,
+      );
       expect(auth.registrations, 1);
+      await tester.runAsync(() => controller.sync.bind());
     },
   );
   testWidgets(
@@ -158,7 +184,7 @@ void main() {
       expect(
         tester
             .widget<FilledButton>(
-              find.widgetWithText(FilledButton, 'Sao lưu ngay / Thử lại'),
+              find.widgetWithText(FilledButton, 'Đồng bộ ngay'),
             )
             .onPressed,
         isNull,
@@ -167,9 +193,6 @@ void main() {
       await tester.drag(find.byType(ListView), const Offset(0, -400));
       await tester.pumpAndSettle();
       await tester.tap(logout);
-      await settleIo(tester);
-      expect(find.text('Có dữ liệu chưa sao lưu'), findsOneWidget);
-      await tester.tap(find.widgetWithText(FilledButton, 'Đăng xuất'));
       await settleIo(tester);
       expect(auth.current, isNull);
       expect(controller.workspace.record.ownerUid, isNull);
@@ -180,7 +203,7 @@ void main() {
     },
   );
   testWidgets(
-    'ready archive restores into a new vault only after switch confirmation',
+    'recovery history is advanced; restore preview warns about other devices without changing the library',
     (tester) async {
       auth.change(
         const AccountIdentity(
@@ -190,7 +213,7 @@ void main() {
         ),
       );
       await tester.runAsync(
-        () async => controller.select(await workspaces.preferred('A')),
+        () async => controller.select(await workspaces.canonical('A')),
       );
       final original = controller.workspace.record;
       final snapshot = (await tester.runAsync(
@@ -201,28 +224,27 @@ void main() {
       api.downloadArchive = File(snapshot.path);
       await open(tester);
       await settleIo(tester);
+      expect(find.byType(DropdownButton<String>), findsNothing);
+      expect(find.byType(PopupMenuButton<String>), findsNothing);
+      await tester.ensureVisible(find.text('Nâng cao'));
+      await tester.tap(find.text('Nâng cao'));
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.text('Lịch sử khôi phục'));
+      await tester.tap(find.text('Lịch sử khôi phục'));
+      await settleIo(tester);
       final menu = find.byType(PopupMenuButton<String>);
       await tester.ensureVisible(menu);
       await tester.tap(menu);
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Khôi phục'));
+      await tester.tap(find.text('Xem và khôi phục'));
       await tester.pump(const Duration(milliseconds: 300));
-      await tester.tap(
-        find.widgetWithText(FilledButton, 'Khôi phục vào kho mới'),
+      expect(
+        find.textContaining('đồng bộ sang các thiết bị khác'),
+        findsOneWidget,
       );
-      await settleIo(tester);
-      for (
-        var i = 0;
-        i < 20 && find.text('Đã khôi phục').evaluate().isEmpty;
-        i++
-      ) {
-        await settleIo(tester);
-      }
-      expect(find.text('Đã khôi phục'), findsOneWidget);
+      await tester.tap(find.text('Hủy'));
+      await tester.pumpAndSettle();
       expect(controller.workspace.record.id, original.id);
-      await tester.tap(find.text('Chuyển kho'));
-      await settleIo(tester);
-      expect(controller.workspace.record.id, isNot(original.id));
       expect(
         (await tester.runAsync(() => workspaces.get(original.id)))!.status,
         'ready',

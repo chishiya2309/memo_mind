@@ -101,9 +101,10 @@ class _MemoMindAppState extends State<MemoMindApp> with WidgetsBindingObserver {
       },
     );
     if (_reminders.gateway.supported) {
-      _studyChanges = WorkspaceRuntime.database.studyChanges.listen(
-        (_) => _reminders.reconcile(),
-      );
+      _studyChanges = WorkspaceRuntime.database.studyChanges.listen((_) {
+        _reminders.reconcile();
+        _refreshDashboard();
+      });
       _initializeReminders();
     } else {
       _reminders.reconcile();
@@ -172,6 +173,7 @@ class _MemoMindAppState extends State<MemoMindApp> with WidgetsBindingObserver {
   void didChangeAppLifecycleState(AppLifecycleState state) {
     _statistics.setResumed(state == AppLifecycleState.resumed);
     if (state == AppLifecycleState.resumed) {
+      widget.account?.sync.resumed();
       _initializeReminders();
       _refreshDashboard();
     }
@@ -232,12 +234,6 @@ class _MemoMindAppState extends State<MemoMindApp> with WidgetsBindingObserver {
             MaterialPageRoute<void>(
               builder: (context) => _FeaturePlaceholder(title: title),
             ),
-          );
-        }
-
-        void showUnimplemented(String title) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('$title chưa được triển khai.')),
           );
         }
 
@@ -367,7 +363,9 @@ class _MemoMindAppState extends State<MemoMindApp> with WidgetsBindingObserver {
                 ),
                 onOpenApprovals: () => openPlaceholder('Duyệt thẻ AI'),
                 onOpenJob: (_) => openPlaceholder('Tác vụ học liệu'),
-                onRetrySync: () => showUnimplemented('Đồng bộ'),
+                onRetrySync: () {
+                  widget.account?.sync.schedule(immediate: true);
+                },
                 onRetryLoad: _refreshDashboard,
                 onImport: (source) async {
                   switch (source) {
@@ -391,6 +389,7 @@ class _MemoMindAppState extends State<MemoMindApp> with WidgetsBindingObserver {
               statisticsRouteObserver: _statisticsRoutes,
               onOpenDueCards: _openDueCards,
               onOpenDeckAsync: openDeck,
+              syncController: widget.account?.sync,
             );
           },
         );

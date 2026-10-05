@@ -3,6 +3,38 @@ import 'dart:io';
 
 import 'package:memo_mind/features/account_backup/domain/auth_repository.dart';
 import 'package:memo_mind/features/account_backup/data/backup_api_client.dart';
+import 'package:memo_mind/features/sync/data/sync_api_client.dart';
+
+class FakeSyncApi extends SyncApiClient {
+  FakeSyncApi(AuthRepository auth)
+    : super(auth: auth, baseUrl: 'https://configured.example');
+  int revision = 0;
+  @override
+  Future<Map<String, dynamic>> request(
+    String method,
+    String suffix, {
+    Map<String, Object?>? body,
+    required String uid,
+  }) async {
+    if (suffix == '/status' || suffix == '/initialize') {
+      return {'initialized': true, 'revision': revision};
+    }
+    if (suffix.startsWith('/changes')) {
+      return {'changes': <Map>[], 'cursor': revision, 'hasMore': false};
+    }
+    if (suffix == '/conflicts') return {'conflicts': <Map>[]};
+    if (suffix == '/push') {
+      return {
+        'receipts': [
+          for (final op in body!['operations'] as List)
+            {'operationId': (op as Map)['operationId'], 'version': ++revision},
+        ],
+        'revision': revision,
+      };
+    }
+    throw const AccountFailure('fake_unsupported', 'Unsupported test route');
+  }
+}
 
 class FakeAccountAuth implements AuthRepository {
   FakeAccountAuth({AccountIdentity? identity}) : current = identity;

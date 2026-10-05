@@ -10,6 +10,8 @@ import '../../../core/workspace/workspace_context.dart';
 import '../data/backup_api_client.dart';
 import '../data/snapshot_codec.dart';
 import '../domain/auth_repository.dart';
+import '../../sync/application/sync_controller.dart';
+import '../../sync/data/local_sync_store.dart';
 
 class AccountBackupController extends ChangeNotifier {
   AccountBackupController({
@@ -17,8 +19,12 @@ class AccountBackupController extends ChangeNotifier {
     required this.workspaces,
     BackupApiClient? api,
     SnapshotCodec? codec,
+    SyncController? syncController,
   }) : api = api ?? BackupApiClient(auth: auth),
        codec = codec ?? SnapshotCodec() {
+    sync = syncController ?? SyncController(auth: auth, workspaces: workspaces);
+    sync.addListener(_publish);
+    sync.checkpoint = recoveryCheckpoint;
     _authChanges = auth.changes.listen((identity) {
       if (identity?.uid != _observedUid) {
         this.api.cancelTransfers();
@@ -28,11 +34,13 @@ class AccountBackupController extends ChangeNotifier {
     });
     _observedUid = auth.current?.uid;
     _watchStudyChanges();
+    unawaited(sync.bind());
   }
   final AuthRepository auth;
   final WorkspaceRepository workspaces;
   final BackupApiClient api;
   final SnapshotCodec codec;
+  late final SyncController sync;
   late final StreamSubscription<AccountIdentity?> _authChanges;
   String? _observedUid;
   StreamSubscription<void>? _studyChanges;
@@ -81,6 +89,7 @@ class AccountBackupController extends ChangeNotifier {
       workspace.record.ownerUid == account?.uid;
   bool get busy => _inFlight.contains(workspace.record.id);
   bool get canBackup =>
+      !_closed &&
       account?.emailVerified == true &&
       workspace.record.ownerUid == account?.uid &&
       !busy;
@@ -100,18 +109,20 @@ class AccountBackupController extends ChangeNotifier {
     cloudLoading = false;
     status = 'Chưa sao lưu';
     _watchStudyChanges();
+    await sync.bind();
     _publish();
   }
 
   Future<void> afterLogin({required bool attachGuest}) async {
-    final uid = account!.uid;
     final old = workspace.record;
-    if (attachGuest && old.ownerUid == null) {
-      await attachGuestWorkspace(old.id, uid);
-    } else if (account?.emailVerified != true && old.ownerUid == null) {
+    if (account?.emailVerified != true && old.ownerUid == null) {
       _publish();
     } else {
-      await select(await workspaces.preferred(uid));
+      await select(
+        await sync.prepareAccount(
+          guest: attachGuest && old.ownerUid == null ? old : null,
+        ),
+      );
     }
   }
 
@@ -280,7 +291,7 @@ class AccountBackupController extends ChangeNotifier {
     }
   }
 
-  Future<void> backup({bool retry = false}) async {
+  Future<void> backup({bool retry = false, bool automatic = false}) async {
     if (!canBackup) {
       throw const AccountFailure(
         'backup_unavailable',
@@ -331,6 +342,7 @@ class AccountBackupController extends ChangeNotifier {
         final snapshot = await codec.capture(source, uid);
         job = {
           ...snapshot.request,
+          if (automatic) 'automatic': true,
           'path': snapshot.path,
           'status': 'uploading',
           'retryCount': 0,
@@ -405,6 +417,107 @@ class AccountBackupController extends ChangeNotifier {
     }
   }
 
+  Future<void> recoveryCheckpoint({bool force = false}) async {
+    if (force && !canBackup) {
+      throw const AccountFailure(
+        'backup_unavailable',
+        'Chưa tạo được điểm khôi phục an toàn. Hãy thử lại trước khi thay đổi dữ liệu.',
+      );
+    }
+    if (!canBackup || !await workspaces.isCanonical(workspace.record)) return;
+    final local = LocalSyncStore(workspace);
+    final today = DateTime.now().toLocal().toIso8601String().substring(0, 10);
+    if (!force &&
+        (await local.setting('checkpointDay') == today ||
+            !await hasChanges())) {
+      return;
+    }
+    // Recover rotation if the process stopped after the sixth confirmed copy.
+    await _pruneRecovery();
+    await backup(automatic: true);
+    await _pruneRecovery();
+    if (force && await hasChanges()) {
+      await backup(automatic: true);
+      await _pruneRecovery();
+      if (await hasChanges()) {
+        throw const AccountFailure(
+          'backup_changed',
+          'Dữ liệu vừa thay đổi. Hãy thử lại khôi phục.',
+        );
+      }
+    }
+    await local.setSetting('checkpointDay', today);
+  }
+
+  Future<void> _pruneRecovery() async {
+    await refreshCloud();
+    final automatic =
+        backups
+            .where((b) => b['automatic'] == true && b['status'] == 'ready')
+            .toList()
+          ..sort(
+            (a, b) =>
+                (b['snapshotAt'] as int).compareTo(a['snapshotAt'] as int),
+          );
+    for (final older in automatic.skip(5)) {
+      await deleteBackup(older);
+    }
+  }
+
+  Future<void> importLegacy(WorkspaceRecord record) async {
+    final context = workspace, uid = account!.uid;
+    if (record.ownerUid != null && record.ownerUid != account?.uid) {
+      throw const AccountFailure(
+        'wrong_workspace',
+        'Dữ liệu thuộc tài khoản khác.',
+      );
+    }
+    await recoveryCheckpoint(force: true);
+    if (account?.uid != uid ||
+        !context.active ||
+        !identical(context, workspace)) {
+      throw const AccountFailure('reauth_required', 'Tài khoản đã thay đổi.');
+    }
+    final source = WorkspaceContext(record, -3);
+    try {
+      await LocalSyncStore(context).importWorkspace(source);
+    } finally {
+      await source.revoke();
+    }
+    await sync.syncNow();
+  }
+
+  Future<void> restoreIntoLibrary(Map<String, dynamic> backup) async {
+    if (sync.busy || await sync.hasPending) {
+      await sync.syncNow();
+      if (sync.busy || await sync.hasPending) {
+        throw const AccountFailure(
+          'sync_pending',
+          'Đồng bộ thay đổi hiện tại trước khi khôi phục.',
+        );
+      }
+    }
+    await recoveryCheckpoint(force: true);
+    final uid = account!.uid, context = workspace;
+    final record = await restore(backup);
+    if (account?.uid != uid || !context.active) {
+      throw const AccountFailure('reauth_required', 'Tài khoản đã thay đổi.');
+    }
+    final staging = WorkspaceContext(record, -4);
+    try {
+      if (sync.needsMigration) {
+        await sync.acceptMigration(source: record);
+        return;
+      }
+      await sync.store.setSetting('restoring', '1');
+      await sync.store.importWorkspace(staging, replace: true);
+    } finally {
+      await staging.revoke();
+    }
+    // Staging stays preserved as a recovery artifact, outside the normal library.
+    await sync.syncNow();
+  }
+
   Future<void> deleteBackup(Map<String, dynamic> backup) async {
     final uid = account!.uid;
     await api.request('DELETE', '/${backup['backupId']}', uid: uid);
@@ -464,6 +577,8 @@ class AccountBackupController extends ChangeNotifier {
     api.cancelTransfers();
     _authChanges.cancel();
     _studyChanges?.cancel();
+    sync.removeListener(_publish);
+    sync.dispose();
     super.dispose();
   }
 }
