@@ -1,0 +1,47 @@
+{
+  "project_info": {
+    "project_number": "33126189837",
+    "project_id": "memomind-f632b",
+    "storage_bucket": "memomind-f632b.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:33126189837:android:5adce3d0f8aad753d67e44",
+        "android_client_info": {
+          "package_name": "vn.edu.hcmute.memo_mind"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "33126189837-47uo38hk67d1jcfvj3qe29jgg2sb8jl2.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "vn.edu.hcmute.memo_mind",
+            "certificate_hash": "d5a1f2c66b18917523628d8598a1af18d5d6d465"
+          }
+        },
+        {
+          "client_id": "33126189837-r5lmfs0hoatdvhvlogndkk29k0091rfc.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBUknDAcLXjyKCeXrehUB3Gf8sX2xGWBd4"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "33126189837-r5lmfs0hoatdvhvlogndkk29k0091rfc.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

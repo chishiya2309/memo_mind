@@ -1,4 +1,4 @@
-package com.example.memo_mind
+package vn.edu.hcmute.memo_mind
 
 import android.os.StatFs
 import android.os.Build

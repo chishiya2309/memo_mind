@@ -111,11 +111,21 @@ flutter build apk --debug -t lib/main.dart
 flutter build apk --release -t lib/main.dart
 ```
 
-The integration test uses an isolated temporary database, checks native SQLite persistence after closing/reopening it, and removes its own fixtures. It does not clear the production database. The current Android release configuration uses the development signing key.
+The integration test uses an isolated temporary database, checks native SQLite persistence after closing/reopening it, and removes its own fixtures. It does not clear the production database. The current Android release configuration uses the shared development signing key.
+
+## Shared Android signing for the team
+
+Android debug, profile, and direct-install release demo builds use `android/keystore/team-debug.keystore`, a copy of the existing development key whose SHA-1/SHA-256 are registered with Firebase for `vn.edu.hcmute.memo_mind`. The key and `android/app/google-services.json` are distributed with the repository. After cloning, install the Flutter/Android SDKs, run `flutter pub get`, and build/run normally; teammates do not need to generate fingerprints or add their machine's SHA to Firebase. Installing the same APK on another phone does not change its signing certificate.
+
+Gradle uses a repository-relative keystore path. Debug/profile inherit the shared debug signing configuration, and release demo builds explicitly use it. If the keystore is missing, the build reports an error: restore the file from the repository instead of generating a replacement. The setup does not modify anyone's global Android debug keystore.
+
+If Android rejects installation because an older copy was signed with another key, export any local data you need before uninstalling that copy and installing the team build. Uninstalling can remove local decks and other app data.
+
+This shared key is only for development and direct-install demos. Before publishing to Google Play, configure a separate production signing key and register the Play App Signing certificate with Firebase. Keep production keystores, private server credentials, and service-account files out of source control. See [Android app signing](https://developer.android.com/studio/publish/app-signing).
 
 See [UC10 / UC04–UC05 validation](docs/uc10-uc04-validation.md) for requirement coverage and the recorded Android checks.
 
-Do not commit `.env` files, service account keys, or other credentials. This repository has no GitHub remote configured yet.
+Do not commit `.env` files, service account keys, or other server/production credentials. The shared development keystore and Firebase Android client configuration are intentional exceptions described above. This repository has no GitHub remote configured yet.
 
 Be Vietnam Pro font files are bundled for offline use. Its license is in `licenses/BeVietnamPro-OFL.txt`.
 
