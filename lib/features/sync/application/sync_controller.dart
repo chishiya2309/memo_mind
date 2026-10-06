@@ -360,7 +360,9 @@ class SyncController extends ChangeNotifier {
       final cloud = await api.request('GET', '/status', uid: uid);
       _check(context, uid, epoch);
       if (cloud['initialized'] != true) {
-        if (await local.setting('migrationAccepted') != '1') {
+        final accepted = await local.setting('migrationAccepted') == '1';
+        _check(context, uid, epoch);
+        if (!accepted) {
           needsMigration = true;
           phase = SyncPhase.migration;
           return;
@@ -371,6 +373,7 @@ class SyncController extends ChangeNotifier {
           uid: uid,
           body: {'sourceId': context.record.id},
         );
+        _check(context, uid, epoch);
       }
       needsMigration = false;
       await _pull(local, uid, context, epoch);
