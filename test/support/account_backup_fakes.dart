@@ -12,6 +12,22 @@ class FakeSyncApi extends SyncApiClient {
   final requests = <String>[];
   AccountFailure? failure;
   Completer<void>? holdRequest;
+  final uploadFailures = <AccountFailure>[];
+  int uploads = 0;
+  bool fileReady = false;
+  void Function()? onUpload;
+  @override
+  Future<void> upload(
+    File file,
+    Map<String, dynamic> upload,
+    void Function(double) progress,
+  ) async {
+    uploads++;
+    onUpload?.call();
+    if (uploadFailures.isNotEmpty) throw uploadFailures.removeAt(0);
+    fileReady = true;
+  }
+
   @override
   Future<Map<String, dynamic>> request(
     String method,
@@ -22,6 +38,9 @@ class FakeSyncApi extends SyncApiClient {
     requests.add('$method $suffix');
     await holdRequest?.future;
     if (failure != null) throw failure!;
+    if (suffix.startsWith('/files/')) {
+      return {'ready': fileReady, 'upload': <String, dynamic>{}};
+    }
     if (suffix == '/status' || suffix == '/initialize') {
       return {'initialized': true, 'revision': revision};
     }

@@ -11,8 +11,16 @@ class AccountIdentity {
 }
 
 class AccountFailure implements Exception {
-  const AccountFailure(this.code, this.message);
+  const AccountFailure(
+    this.code,
+    this.message, {
+    this.httpStatus,
+    this.storageCode,
+    this.requestId,
+  });
   final String code, message;
+  final int? httpStatus;
+  final String? storageCode, requestId;
   @override
   String toString() => message;
 }
