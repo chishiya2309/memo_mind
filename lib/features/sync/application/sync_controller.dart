@@ -13,6 +13,21 @@ import '../../account_backup/data/snapshot_codec.dart';
 import '../data/local_sync_store.dart';
 import '../data/sync_api_client.dart';
 
+enum SyncPhase {
+  signedOut,
+  ready,
+  pending,
+  syncing,
+  synced,
+  migration,
+  reauthenticate,
+  verifyEmail,
+  blocked,
+  failed,
+}
+
+enum SyncMediaPhase { idle, syncing, pending }
+
 class SyncController extends ChangeNotifier {
   SyncController({
     required this.auth,
@@ -30,11 +45,12 @@ class SyncController extends ChangeNotifier {
         lastSynced = null;
         needsMigration = false;
         error = null;
-        mediaStatus = null;
+        mediaPhase = SyncMediaPhase.idle;
         _failures = 0;
-        status = identity == null
-            ? 'Đăng nhập để đồng bộ'
-            : 'Có thay đổi chưa đồng bộ';
+        automatic = false;
+        pendingChanges = false;
+        failureCode = null;
+        phase = identity == null ? SyncPhase.signedOut : SyncPhase.ready;
         _notify();
       }
     });
@@ -52,8 +68,47 @@ class SyncController extends ChangeNotifier {
   String? _uid;
   bool _disposed = false, _running = false;
   bool needsMigration = false;
-  String status = 'Đăng nhập để đồng bộ';
-  String? error, mediaStatus;
+  SyncPhase phase = SyncPhase.signedOut;
+  bool automatic = false, pendingChanges = false;
+  String? failureCode;
+  bool get requiresAuthentication => phase == SyncPhase.reauthenticate;
+  bool get accountBlocked =>
+      const ['account_disabled', 'account_deleted'].contains(failureCode);
+  bool get _retryable =>
+      failureCode == null ||
+      const [
+        'waiting_network',
+        'unconfirmed',
+        'auth_service_unavailable',
+        'file_pending',
+        'download_failed',
+        'checksum_mismatch',
+        'service_unavailable',
+        'server_error',
+        'too-many-requests',
+      ].contains(failureCode);
+  String get status => switch (phase) {
+    SyncPhase.signedOut => 'Đăng nhập để đồng bộ',
+    SyncPhase.ready => 'Đồng bộ để tải thư viện',
+    SyncPhase.pending => 'Có thay đổi chưa đồng bộ',
+    SyncPhase.syncing => 'Đang đồng bộ',
+    SyncPhase.synced =>
+      conflicts.isEmpty
+          ? 'Đã đồng bộ'
+          : 'Đã đồng bộ · ${conflicts.length} mục cần chọn nội dung',
+    SyncPhase.migration => 'Chọn dữ liệu ban đầu để đồng bộ',
+    SyncPhase.reauthenticate => 'Xác thực lại để đồng bộ',
+    SyncPhase.verifyEmail => 'Cần xác minh email',
+    SyncPhase.blocked => 'Đồng bộ đang tạm dừng',
+    SyncPhase.failed => 'Chưa kết nối được dịch vụ',
+  };
+  String? error;
+  SyncMediaPhase mediaPhase = SyncMediaPhase.idle;
+  String? get mediaStatus => switch (mediaPhase) {
+    SyncMediaPhase.idle => null,
+    SyncMediaPhase.syncing => 'Đang đồng bộ ảnh và PDF',
+    SyncMediaPhase.pending => 'Ảnh và PDF chưa đồng bộ đầy đủ',
+  };
   DateTime? lastSynced;
   List<Map<String, dynamic>> conflicts = [];
   WorkspaceRecord? migrationSource;
@@ -78,24 +133,46 @@ class SyncController extends ChangeNotifier {
     if (_disposed || epoch != _epoch) return;
     lastSynced = null;
     conflicts = [];
+    automatic = false;
+    pendingChanges = false;
+    error = null;
+    failureCode = null;
+    mediaPhase = SyncMediaPhase.idle;
+    needsMigration = false;
+    phase = auth.current == null
+        ? SyncPhase.signedOut
+        : auth.current!.emailVerified
+        ? SyncPhase.ready
+        : SyncPhase.verifyEmail;
     if (!available ||
         !await workspaces.isCanonical(workspaces.current!.record)) {
+      _notify();
       return;
     }
     final context = workspaces.current!;
     if (_disposed || epoch != _epoch || !context.active) return;
     final local = LocalSyncStore(context);
     final last = await local.setting('lastSynced');
+    final savedConflicts = await local.conflicts();
+    final savedAutomatic = await local.setting('automaticSync') == '1';
+    final savedPending = await local.hasPending;
+    final mediaPending = await local.setting('mediaPending') == '1';
+    if (_disposed || epoch != _epoch || !context.active) return;
     lastSynced = last == null
         ? null
         : DateTime.fromMillisecondsSinceEpoch(int.parse(last));
-    conflicts = await local.conflicts();
-    if (_disposed || epoch != _epoch || !context.active) return;
+    conflicts = savedConflicts;
+    automatic = savedAutomatic;
+    pendingChanges = savedPending;
+    mediaPhase = mediaPending ? SyncMediaPhase.pending : SyncMediaPhase.idle;
+    phase = pendingChanges
+        ? SyncPhase.pending
+        : lastSynced == null
+        ? SyncPhase.ready
+        : SyncPhase.synced;
     _studyChanges = context.database.studyChanges.listen((_) {
       if (!_running) {
-        status = 'Có thay đổi chưa đồng bộ';
-        _notify();
-        if (_retry?.isActive != true) schedule();
+        unawaited(_refreshPending(context, epoch));
       }
     });
     _dirtyPoll = Timer.periodic(const Duration(seconds: 3), (_) async {
@@ -104,8 +181,8 @@ class SyncController extends ChangeNotifier {
           _debounce?.isActive != true &&
           !needsMigration &&
           context.active &&
-          await local.hasPending) {
-        schedule(immediate: true);
+          epoch == _epoch) {
+        await _refreshPending(context, epoch);
       }
     });
     if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
@@ -124,6 +201,38 @@ class SyncController extends ChangeNotifier {
     schedule(immediate: true);
   }
 
+  Future<void> _refreshPending(WorkspaceContext context, int epoch) async {
+    try {
+      final pending = await LocalSyncStore(context).hasPending;
+      if (_disposed || epoch != _epoch || !context.active) return;
+      pendingChanges = pending;
+      if (!_running && failureCode == null && !needsMigration) {
+        phase = pending
+            ? SyncPhase.pending
+            : lastSynced == null
+            ? SyncPhase.ready
+            : SyncPhase.synced;
+      }
+      _notify();
+      if (pending && _retry?.isActive != true) schedule();
+    } catch (_) {
+      // A workspace may be revoked while its local status is being read.
+    }
+  }
+
+  Future<void> setAutomatic(bool value) async {
+    if (!available) return;
+    final context = workspaces.current!, epoch = _epoch;
+    await LocalSyncStore(context)
+        .setSetting('automaticSync', value ? '1' : '0');
+    if (_disposed || epoch != _epoch || !context.active) return;
+    automatic = value;
+    _debounce?.cancel();
+    _retry?.cancel();
+    _notify();
+    if (value) schedule(immediate: true);
+  }
+
   /// A canonical workspace is created separately; legacy and guest data stay intact.
   Future<WorkspaceRecord> prepareAccount({WorkspaceRecord? guest}) async {
     final uid = auth.current!.uid;
@@ -136,36 +245,8 @@ class SyncController extends ChangeNotifier {
             : null);
     final context = WorkspaceContext(canonical, -1);
     try {
-      final cloud = await api.request('GET', '/status', uid: uid);
-      if (cloud['initialized'] == true) {
-        if (guest != null) await _import(context, guest);
-      } else {
-        final cached = LocalSyncStore(context);
-        final alreadyAccepted =
-            await cached.setting('migrationAccepted') == '1';
-        needsMigration = !alreadyAccepted;
-        if (guest != null) {
-          await _import(context, guest);
-          await cached.setSetting('migrationAccepted', '1');
-          await api.request(
-            'POST',
-            '/initialize',
-            uid: uid,
-            body: {'sourceId': guest.id},
-          );
-          needsMigration = false;
-        } else if (alreadyAccepted) {
-          await api.request(
-            'POST',
-            '/initialize',
-            uid: uid,
-            body: {'sourceId': canonical.id},
-          );
-        }
-      }
-    } on AccountFailure catch (e) {
-      error = e.message;
-      status = 'Đang offline';
+      // Cloud discovery belongs to an explicit sync, not signing in.
+      needsMigration = false;
       if (guest != null) {
         await _import(context, guest);
         await LocalSyncStore(context).setSetting('migrationAccepted', '1');
@@ -218,7 +299,14 @@ class SyncController extends ChangeNotifier {
   }
 
   void schedule({bool immediate = false}) {
-    if (_disposed || !available || needsMigration) return;
+    if (_disposed ||
+        !automatic ||
+        !available ||
+        needsMigration ||
+        !_retryable ||
+        _running) {
+      return;
+    }
     _debounce?.cancel();
     _debounce = Timer(
       immediate ? Duration.zero : const Duration(seconds: 3),
@@ -228,7 +316,10 @@ class SyncController extends ChangeNotifier {
 
   void resumed() => schedule(immediate: true);
   void connectivityRestored() => schedule(immediate: true);
-  Future<bool> get hasPending async => available && await store.hasPending;
+  Future<bool> get hasPending async =>
+      auth.current != null &&
+      workspaces.current?.record.ownerUid == auth.current!.uid &&
+      (await store.hasPending || await store.setting('mediaPending') == '1');
 
   bool _valid(WorkspaceContext context, String uid, int epoch) =>
       !_disposed &&
@@ -252,19 +343,26 @@ class SyncController extends ChangeNotifier {
         epoch = _epoch;
     final local = LocalSyncStore(context);
     _running = true;
+    _debounce?.cancel();
     _retry?.cancel();
-    status = 'Đang đồng bộ';
+    phase = SyncPhase.syncing;
+    failureCode = null;
     error = null;
     _notify();
     try {
-      if (!await workspaces.isCanonical(context.record)) return;
+      if (!await workspaces.isCanonical(context.record)) {
+        throw const AccountFailure(
+          'wrong_workspace',
+          'Mở thư viện của tài khoản trước khi đồng bộ.',
+        );
+      }
       _check(context, uid, epoch);
       final cloud = await api.request('GET', '/status', uid: uid);
       _check(context, uid, epoch);
       if (cloud['initialized'] != true) {
         if (await local.setting('migrationAccepted') != '1') {
           needsMigration = true;
-          status = 'Chọn dữ liệu ban đầu để đồng bộ';
+          phase = SyncPhase.migration;
           return;
         }
         await api.request(
@@ -304,21 +402,26 @@ class SyncController extends ChangeNotifier {
       final response = await api.request('GET', '/conflicts', uid: uid);
       _check(context, uid, epoch);
       await local.saveConflicts(response['conflicts'] as List);
-      conflicts = await local.conflicts();
-      mediaStatus = 'Đang đồng bộ ảnh và PDF';
-      _notify();
-      await _syncFiles(local, uid, context, epoch);
+      final currentConflicts = await local.conflicts();
       _check(context, uid, epoch);
-      mediaStatus = null;
+      conflicts = currentConflicts;
       lastSynced = DateTime.now();
       await local.setSetting(
         'lastSynced',
         '${lastSynced!.millisecondsSinceEpoch}',
       );
+      _check(context, uid, epoch);
+      await local.setSetting('mediaPending', '1');
+      _check(context, uid, epoch);
+      mediaPhase = SyncMediaPhase.syncing;
+      _notify();
+      await _syncFiles(local, uid, context, epoch);
+      _check(context, uid, epoch);
+      await local.setSetting('mediaPending', '0');
+      _check(context, uid, epoch);
+      mediaPhase = SyncMediaPhase.idle;
       _failures = 0;
-      status = conflicts.isEmpty
-          ? 'Đã đồng bộ'
-          : 'Đã đồng bộ · ${conflicts.length} mục cần chọn nội dung';
+      phase = SyncPhase.synced;
       // Recovery checkpoints cannot prevent study synchronization succeeding.
       try {
         await checkpoint?.call(force: false);
@@ -330,26 +433,22 @@ class SyncController extends ChangeNotifier {
         final failure = e is AccountFailure
             ? e
             : const AccountFailure(
-                'waiting_network',
+                'sync_failed',
                 'Chưa đồng bộ được. Dữ liệu được giữ trên thiết bị.',
               );
         error = failure.message;
-        status = failure.code == 'reauth_required'
-            ? 'Cần đăng nhập lại'
+        failureCode = failure.code;
+        phase = failure.code == 'reauth_required'
+            ? SyncPhase.reauthenticate
             : failure.code == 'email_unverified'
-            ? 'Cần xác minh email'
-            : ['waiting_network', 'unconfirmed'].contains(failure.code)
-            ? 'Đang offline'
-            : 'Chưa đồng bộ được';
-        if (mediaStatus != null) mediaStatus = 'Ảnh và PDF chưa đồng bộ đầy đủ';
-        if (![
-          'reauth_required',
-          'email_unverified',
-          'sync_cancelled',
-          'sync_limit',
-          'invalid_sync',
-          'incompatible_sync',
-        ].contains(failure.code)) {
+            ? SyncPhase.verifyEmail
+            : _retryable
+            ? SyncPhase.failed
+            : SyncPhase.blocked;
+        if (mediaPhase == SyncMediaPhase.syncing) {
+          mediaPhase = SyncMediaPhase.pending;
+        }
+        if (automatic && _retryable) {
           final seconds = (5 * (1 << (_failures++).clamp(0, 6))).clamp(5, 300);
           _retry?.cancel();
           _retry = Timer(
@@ -359,15 +458,28 @@ class SyncController extends ChangeNotifier {
         }
       }
     } finally {
-      _running = false;
-      _notify();
-      if (!_disposed && _epoch != epoch) {
-        schedule(immediate: true);
-      } else if (_valid(context, uid, epoch) &&
-          error == null &&
-          await local.hasPending) {
-        status = 'Có thay đổi chưa đồng bộ';
-        schedule();
+      try {
+        if (_valid(context, uid, epoch)) {
+          final pending = await local.hasPending;
+          if (_valid(context, uid, epoch)) {
+            pendingChanges = pending;
+            if (error == null && pending && !needsMigration) {
+              phase = SyncPhase.pending;
+            }
+          }
+        }
+      } catch (_) {
+        // Status reads can race with workspace revocation; the next bind reloads them.
+      } finally {
+        _running = false;
+        _notify();
+        if (!_disposed && _epoch != epoch) {
+          schedule(immediate: true);
+        } else if (_valid(context, uid, epoch) &&
+            error == null &&
+            pendingChanges) {
+          schedule();
+        }
       }
     }
   }

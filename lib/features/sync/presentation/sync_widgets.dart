@@ -28,7 +28,10 @@ class SyncStatusButton extends StatelessWidget {
       child: TextButton.icon(
         onPressed: controller.busy
             ? null
-            : controller.available
+            : controller.available &&
+                  !controller.requiresAuthentication &&
+                  !controller.accountBlocked &&
+                  !controller.needsMigration
             ? controller.syncNow
             : onSignIn,
         icon: controller.busy
@@ -38,7 +41,7 @@ class SyncStatusButton extends StatelessWidget {
                 child: CircularProgressIndicator(strokeWidth: 2),
               )
             : const Icon(Icons.sync),
-        label: const Text('Đồng bộ'),
+        label: Text(controller.pendingChanges ? 'Chưa đồng bộ' : 'Đồng bộ'),
       ),
     ),
   );
@@ -49,9 +52,13 @@ class SyncAccountPanel extends StatelessWidget {
     super.key,
     required this.controller,
     required this.run,
+    required this.onReauthenticate,
+    this.busy = false,
   });
   final AccountBackupController controller;
   final Future<void> Function(Future<void> Function()) run;
+  final Future<void> Function() onReauthenticate;
+  final bool busy;
   @override
   Widget build(BuildContext context) {
     final c = controller, sync = c.sync;
@@ -60,6 +67,10 @@ class SyncAccountPanel extends StatelessWidget {
       children: [
         const Divider(),
         const Text('Thư viện học của bạn'),
+        if (sync.lastSynced == null)
+          const Text(
+            'Thư viện trên thiết bị · chưa kiểm tra dữ liệu trên tài khoản',
+          ),
         FutureBuilder(
           future: c.codec.estimate(c.workspace),
           builder: (_, snapshot) => Text(
@@ -71,9 +82,9 @@ class SyncAccountPanel extends StatelessWidget {
         const SizedBox(height: 16),
         Text(sync.status),
         if (sync.lastSynced != null)
-          Text('Lần đồng bộ gần nhất: ${syncDate(sync.lastSynced!)}'),
+          Text('Tiến độ học đã đồng bộ: ${syncDate(sync.lastSynced!)}'),
         if (sync.mediaStatus != null) Text(sync.mediaStatus!),
-        if (sync.error != null)
+        if (sync.error != null && sync.error != sync.status)
           Text(
             sync.error!,
             style: TextStyle(color: Theme.of(context).colorScheme.error),
@@ -81,15 +92,44 @@ class SyncAccountPanel extends StatelessWidget {
         if (sync.busy) const LinearProgressIndicator(),
         const SizedBox(height: 12),
         FilledButton.icon(
-          onPressed: !sync.available || sync.busy || sync.needsMigration
+          onPressed:
+              !sync.available ||
+                  sync.busy ||
+                  busy ||
+                  sync.needsMigration ||
+                  sync.accountBlocked
               ? null
+              : sync.requiresAuthentication
+              ? () => run(onReauthenticate)
               : () => run(sync.syncNow),
           icon: const Icon(Icons.sync),
-          label: Text(sync.error == null ? 'Đồng bộ ngay' : 'Thử lại đồng bộ'),
+          label: Text(
+            sync.requiresAuthentication
+                ? 'Xác thực lại'
+                : sync.error != null
+                ? 'Thử lại đồng bộ'
+                : sync.available && sync.lastSynced == null
+                ? 'Đồng bộ để tải thư viện'
+                : 'Đồng bộ ngay',
+          ),
+        ),
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          title: const Text('Tự động đồng bộ'),
+          subtitle: const Text(
+            'Trên thiết bị này, khi mở ứng dụng và có thay đổi.',
+          ),
+          value: sync.automatic,
+          onChanged: !sync.available || busy
+              ? null
+              : (value) => run(() => sync.setAutomatic(value)),
+        ),
+        const Text(
+          'Đồng bộ sau khi học trên máy này và trước khi học trên máy khác. Thay đổi chưa gửi vẫn được giữ trên thiết bị.',
         ),
         if (sync.needsMigration) ...[
           const Text(
-            'Chọn dữ liệu ban đầu một lần. Sau đó các thiết bị sẽ tự dùng chung thư viện.',
+            'Chọn dữ liệu ban đầu một lần, rồi đồng bộ để dùng chung thư viện giữa các thiết bị.',
           ),
           OutlinedButton(
             onPressed: () => Navigator.of(context).push(

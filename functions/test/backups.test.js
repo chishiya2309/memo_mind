@@ -58,7 +58,7 @@ class MemoryObjects {
 async function server(run, { timeoutMs } = {}) {
   const metadata = new MemoryMetadata(), objects = new MemoryObjects();
   const app = createApp({ backup: { metadata, objects, timeoutMs, verifyToken: async token => {
-    if (token === 'bad') throw Error('invalid');
+    if (token === 'bad') throw Object.assign(Error('invalid'), { code: 'auth/invalid-id-token' });
     return { uid: token === 'B' ? 'B' : 'A', email_verified: token !== 'unverified' };
   } } });
   const s = app.listen(0, '127.0.0.1'); await new Promise(resolve => s.once('listening', resolve));

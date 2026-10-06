@@ -2,6 +2,7 @@ const express = require('express');
 const { fail } = require('../backup/validation');
 const { validId, validateOperation } = require('./schema');
 const { configuredSyncAdapters } = require('./adapters');
+const { authenticate } = require('../authentication');
 function syncRouter(injected) {
   const router = express.Router(); let dependencies = injected;
   const route = action => (req, res, next) => Promise.resolve(action(req, res)).catch(next);
@@ -15,11 +16,7 @@ function syncRouter(injected) {
   router.use((req, res, next) => Promise.resolve().then(async () => {
     dependencies ||= configuredSyncAdapters();
     if (!dependencies) fail('sync_not_configured', 'Dịch vụ đồng bộ chưa được cấu hình.', 503);
-    const token = /^Bearer (\S+)$/.exec(req.headers.authorization || '')?.[1];
-    let identity; try { identity = token && await dependencies.verifyToken(token); } catch { /* rejected below */ }
-    if (!identity?.uid) fail('reauth_required', 'Cần đăng nhập lại.', 401);
-    if (identity.email_verified !== true) fail('email_unverified', 'Xác minh email để đồng bộ.', 403);
-    req.uid = identity.uid; next();
+    await authenticate(req, res, token => dependencies.verifyToken(token)); next();
   }).catch(next));
   router.use(express.json({ limit: '1mb' }));
   router.get('/status', route(async (req, res) => res.json(await dependencies.store.status(req.uid))));

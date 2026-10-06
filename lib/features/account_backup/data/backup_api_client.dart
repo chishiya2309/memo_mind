@@ -21,7 +21,9 @@ class BackupApiClient {
   final Duration requestTimeout;
   final http.Client? _injectedClient;
   final _active = <http.Client>{};
+  int _generation = 0;
   void cancelTransfers() {
+    _generation++;
     for (final client in _active.toList()) {
       client.close();
     }
@@ -33,6 +35,30 @@ class BackupApiClient {
     String suffix, {
     Map<String, Object?>? body,
     required String uid,
+  }) => _request(
+    method,
+    suffix,
+    encodedBody: body == null ? null : jsonEncode(body),
+    uid: uid,
+    generation: _generation,
+  );
+
+  void _checkSession(String uid, int generation) {
+    if (auth.current?.uid != uid || generation != _generation) {
+      throw const AccountFailure(
+        'sync_cancelled',
+        'Tài khoản hoặc thư viện đã thay đổi.',
+      );
+    }
+  }
+
+  Future<Map<String, dynamic>> _request(
+    String method,
+    String suffix, {
+    String? encodedBody,
+    required String uid,
+    required int generation,
+    bool refreshed = false,
   }) async {
     final base = baseUrl.trim().replaceFirst(RegExp(r'/+$'), '');
     final uri = Uri.tryParse(
@@ -48,13 +74,17 @@ class BackupApiClient {
         'Chưa cấu hình dịch vụ sao lưu HTTPS.',
       );
     }
-    if (auth.current?.uid != uid) {
-      throw const AccountFailure('reauth_required', 'Tài khoản đã thay đổi.');
+    _checkSession(uid, generation);
+    final String token;
+    try {
+      token = await auth.token(refresh: refreshed).timeout(requestTimeout);
+    } on TimeoutException {
+      throw const AccountFailure(
+        'waiting_network',
+        'Chưa kết nối được dịch vụ xác thực. Bạn vẫn có thể học trên thiết bị.',
+      );
     }
-    final token = await auth.token(refresh: true);
-    if (auth.current?.uid != uid) {
-      throw const AccountFailure('reauth_required', 'Tài khoản đã thay đổi.');
-    }
+    _checkSession(uid, generation);
     final client = _injectedClient ?? http.Client();
     _active.add(client);
     try {
@@ -63,16 +93,54 @@ class BackupApiClient {
           'Authorization': 'Bearer $token',
           'Content-Type': 'application/json',
         });
-      if (body != null) req.body = jsonEncode(body);
+      if (encodedBody != null) req.body = encodedBody;
       final response = await (() async => http.Response.fromStream(
         await client.send(req),
       ))().timeout(requestTimeout);
-      final decoded =
-          jsonDecode(utf8.decode(response.bodyBytes)) as Map<String, dynamic>;
+      _checkSession(uid, generation);
+      Map<String, dynamic> decoded;
+      try {
+        final value = jsonDecode(utf8.decode(response.bodyBytes));
+        if (value is! Map<String, dynamic>) throw const FormatException();
+        decoded = value;
+      } on FormatException {
+        if (response.statusCode >= 500) {
+          throw const AccountFailure(
+            'service_unavailable',
+            'Chưa kết nối được dịch vụ. Hãy thử lại sau.',
+          );
+        }
+        rethrow;
+      }
       if (response.statusCode < 200 || response.statusCode >= 300) {
+        final code = decoded['error'] as String?;
+        if (response.statusCode == 401 &&
+            [
+              'token_expired',
+              'token_invalid',
+              'reauth_required',
+            ].contains(code)) {
+          if (!refreshed) {
+            return await _request(
+              method,
+              suffix,
+              encodedBody: encodedBody,
+              uid: uid,
+              generation: generation,
+              refreshed: true,
+            );
+          }
+          throw const AccountFailure(
+            'reauth_required',
+            'Không thể khôi phục phiên. Xác thực lại để tiếp tục đồng bộ.',
+          );
+        }
         throw AccountFailure(
-          decoded['error'] as String? ?? 'backup_failed',
-          decoded['message'] as String? ?? 'Không thể xử lý sao lưu.',
+          code ??
+              (response.statusCode >= 500
+                  ? 'service_unavailable'
+                  : 'backup_failed'),
+          decoded['message'] as String? ?? 'Chưa thực hiện được yêu cầu. Dữ liệu trên thiết bị được giữ nguyên.',
         );
       }
       return decoded;

@@ -2,21 +2,17 @@ const express = require('express');
 const { ApiError } = require('../validation');
 const { limits, validateRequest, inspectArchive, fail } = require('./validation');
 const { configuredAdapters } = require('./adapters');
+const { authenticate } = require('../authentication');
 
 const immutableFields = ['backupId', 'workspaceId', 'bundleHash', 'manifestHash', 'fingerprint', 'sizeBytes', 'fileCount', 'schemaVersion', 'schedulerVersion', 'snapshotRevision', 'snapshotAt'];
 const keys = job => ({ staging: `staging/${job.ownerUid}/${job.workspaceId}/${job.backupId}.zip`, ready: `ready/${job.ownerUid}/${job.workspaceId}/${job.backupId}.zip` });
 function backupRouter(injected) {
   const router = express.Router(); let dependencies = injected;
   const asyncRoute = action => (req, res, next) => Promise.resolve(action(req, res, next)).catch(next);
-  router.use(asyncRoute(async (req, _, next) => {
+  router.use(asyncRoute(async (req, res, next) => {
     dependencies ||= configuredAdapters();
     if (!dependencies) fail('backup_not_configured', 'Dịch vụ sao lưu chưa được cấu hình.', 503);
-    const token = /^Bearer (\S+)$/.exec(req.headers.authorization || '')?.[1];
-    if (!token) fail('reauth_required', 'Cần đăng nhập lại.', 401);
-    let identity;
-    try { identity = await dependencies.verifyToken(token); } catch { fail('reauth_required', 'Cần đăng nhập lại.', 401); }
-    if (!identity?.uid || identity.email_verified !== true) fail('email_unverified', 'Xác minh email để dùng sao lưu.', 403);
-    req.uid = identity.uid; next();
+    await authenticate(req, res, token => dependencies.verifyToken(token)); next();
   }));
   router.use(express.json({ limit: '32kb' }));
   async function owned(req) {

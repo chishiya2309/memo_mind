@@ -23,6 +23,30 @@ class FirebaseAuthRepository implements AuthRepository {
     try {
       return await action();
     } on FirebaseAuthException catch (e) {
+      if (['user-token-expired', 'invalid-user-token'].contains(e.code)) {
+        throw const AccountFailure(
+          'reauth_required',
+          'Phiên đã kết thúc. Xác thực lại để tiếp tục đồng bộ.',
+        );
+      }
+      if (e.code == 'user-disabled') {
+        throw const AccountFailure(
+          'account_disabled',
+          'Tài khoản đã bị vô hiệu hóa.',
+        );
+      }
+      if (e.code == 'user-not-found' && auth.currentUser != null) {
+        throw const AccountFailure(
+          'account_deleted',
+          'Tài khoản không còn tồn tại. Dữ liệu trên thiết bị được giữ nguyên.',
+        );
+      }
+      if (e.code == 'network-request-failed') {
+        throw const AccountFailure(
+          'waiting_network',
+          'Chưa kết nối được dịch vụ. Bạn vẫn có thể học trên thiết bị.',
+        );
+      }
       throw AccountFailure(e.code, switch (e.code) {
         'network-request-failed' =>
           'Cần kết nối mạng. Bạn vẫn có thể học trên thiết bị.',
