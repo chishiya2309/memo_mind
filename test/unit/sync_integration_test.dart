@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 import 'package:sqflite/sqflite.dart' as sqlite;
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
@@ -103,9 +104,13 @@ void main() {
   late String url;
   final devices = <_Device>[];
   setUpAll(() {
+    // The integration server runs on the host; Android connectivity is mocked
+    // separately in widget tests and must not require a platform binding here.
+    debugDefaultTargetPlatformOverride = TargetPlatform.windows;
     sqfliteFfiInit();
     sqlite.databaseFactory = databaseFactoryFfi;
   });
+  tearDownAll(() => debugDefaultTargetPlatformOverride = null);
   setUp(() async {
     root = await Directory.systemTemp.createTemp('sync-integration-');
     server = await Process.start('node', [
