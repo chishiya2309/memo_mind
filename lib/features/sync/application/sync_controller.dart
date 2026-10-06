@@ -82,7 +82,7 @@ class SyncController extends ChangeNotifier {
         'auth_service_unavailable',
         'file_pending',
         'download_failed',
-        'checksum_mismatch',
+        'storage_unavailable',
         'service_unavailable',
         'server_error',
         'too-many-requests',
@@ -99,8 +99,14 @@ class SyncController extends ChangeNotifier {
     SyncPhase.migration => 'Chọn dữ liệu ban đầu để đồng bộ',
     SyncPhase.reauthenticate => 'Xác thực lại để đồng bộ',
     SyncPhase.verifyEmail => 'Cần xác minh email',
-    SyncPhase.blocked => 'Đồng bộ đang tạm dừng',
-    SyncPhase.failed => 'Chưa kết nối được dịch vụ',
+    SyncPhase.blocked =>
+      mediaPhase == SyncMediaPhase.pending
+          ? 'Chưa đồng bộ đủ ảnh và PDF'
+          : 'Đồng bộ đang tạm dừng',
+    SyncPhase.failed =>
+      mediaPhase == SyncMediaPhase.pending
+          ? 'Chưa đồng bộ đủ ảnh và PDF'
+          : 'Chưa kết nối được dịch vụ',
   };
   String? error;
   SyncMediaPhase mediaPhase = SyncMediaPhase.idle;
@@ -591,7 +597,7 @@ class SyncController extends ChangeNotifier {
           await local.setSetting('verified.$key', signature);
           continue;
         }
-        final result = await api.request(
+        var result = await api.request(
           'POST',
           '/files/$hash',
           uid: uid,
@@ -599,11 +605,33 @@ class SyncController extends ChangeNotifier {
         );
         _check(context, uid, epoch);
         if (result['ready'] != true) {
-          await api.upload(
-            file,
-            Map<String, dynamic>.from(result['upload'] as Map),
-            (_) {},
-          );
+          for (var attempt = 0; attempt < 2; attempt++) {
+            _check(context, uid, epoch);
+            try {
+              await api.upload(
+                file,
+                Map<String, dynamic>.from(result['upload'] as Map),
+                (_) {},
+              );
+              break;
+            } on AccountFailure catch (failure) {
+              _check(context, uid, epoch);
+              if (failure.code != 'storage_url_expired' || attempt == 1) {
+                rethrow;
+              }
+              result = await api.request(
+                'POST',
+                '/files/$hash',
+                uid: uid,
+                body: {
+                  'sizeBytes': ref['sizeBytes'],
+                  'mimeType': ref['mimeType'],
+                },
+              );
+              _check(context, uid, epoch);
+              if (result['ready'] == true) break;
+            }
+          }
           _check(context, uid, epoch);
           final verified = await api.request(
             'POST',
@@ -611,6 +639,7 @@ class SyncController extends ChangeNotifier {
             uid: uid,
             body: {'sizeBytes': ref['sizeBytes'], 'mimeType': ref['mimeType']},
           );
+          _check(context, uid, epoch);
           if (verified['ready'] != true) {
             throw const AccountFailure(
               'file_pending',

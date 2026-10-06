@@ -212,6 +212,32 @@ void main() {
     expect(find.text('Xác thực lại'), findsNothing);
   });
 
+  testWidgets(
+    'storage failure shows one media error and keeps synced progress',
+    (tester) async {
+      await signedIn(tester);
+      await tester.runAsync(controller.sync.syncNow);
+      final last = controller.sync.lastSynced;
+      syncApi.failure = const AccountFailure(
+        'storage_not_configured',
+        'Dịch vụ lưu trữ chưa được cấu hình đúng. Chưa tải lên được ảnh/PDF.',
+      );
+      await tester.runAsync(controller.sync.syncNow);
+      controller.sync.mediaPhase = SyncMediaPhase.pending;
+      await tester.pump();
+      expect(controller.sync.lastSynced, last);
+      expect(find.text('Chưa đồng bộ đủ ảnh và PDF'), findsOneWidget);
+      expect(find.text('Ảnh và PDF chưa đồng bộ đầy đủ'), findsOneWidget);
+      expect(find.text(syncApi.failure!.message), findsOneWidget);
+      expect(find.text('Chưa kết nối được dịch vụ'), findsNothing);
+      expect(find.text('Xác thực lại'), findsNothing);
+      expect(
+        find.widgetWithText(FilledButton, 'Thử lại đồng bộ'),
+        findsOneWidget,
+      );
+    },
+  );
+
   testWidgets('required and invalid fields do not send login', (tester) async {
     await open(tester);
     await tester.tap(find.text('Đăng nhập'));

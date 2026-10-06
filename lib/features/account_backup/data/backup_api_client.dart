@@ -1,8 +1,10 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:developer' as developer;
 
 import 'package:http/http.dart' as http;
+import 'package:xml/xml.dart';
 
 import '../domain/auth_repository.dart';
 
@@ -13,12 +15,17 @@ class BackupApiClient {
     http.Client? client,
     this.apiPath = 'backups',
     this.requestTimeout = const Duration(minutes: 10),
+    this.transferTimeout = const Duration(minutes: 10),
+    http.Client Function()? transferClientFactory,
   }) : baseUrl = baseUrl ?? const String.fromEnvironment('BACKEND_BASE_URL'),
-       _injectedClient = client;
+       _injectedClient = client,
+       _transferClientFactory = transferClientFactory ?? http.Client.new;
   final AuthRepository auth;
   final String baseUrl;
   final String apiPath;
   final Duration requestTimeout;
+  final Duration transferTimeout;
+  final http.Client Function() _transferClientFactory;
   final http.Client? _injectedClient;
   final _active = <http.Client>{};
   int _generation = 0;
@@ -170,17 +177,36 @@ class BackupApiClient {
     Map<String, dynamic> upload,
     void Function(double) progress,
   ) async {
-    final client = http.Client();
+    final generation = _generation;
+    final uid = auth.current?.uid;
+    void check() {
+      if (generation != _generation || auth.current?.uid != uid) {
+        throw const AccountFailure(
+          'sync_cancelled',
+          'Tác vụ đã dừng. Dữ liệu được giữ trên thiết bị.',
+        );
+      }
+    }
+
+    final subject = apiPath == 'sync' ? 'ảnh/PDF' : 'bản sao';
+    final client = _transferClientFactory();
     _active.add(client);
+    int? status;
+    String? requestId;
     try {
       final request = http.StreamedRequest(
         'PUT',
         Uri.parse(upload['url'] as String),
       )..contentLength = await file.length();
+      check();
       request.headers.addAll(
         Map<String, String>.from(upload['headers'] as Map),
       );
-      final sending = client.send(request);
+      final sending = client.send(request).then((response) {
+        status = response.statusCode;
+        requestId = _safeDiagnostic(response.headers['x-amz-request-id']);
+        return response;
+      });
       var sent = 0;
       final feeding = (() async {
         try {
@@ -203,29 +229,147 @@ class BackupApiClient {
           feeding,
         ], eagerError: true);
         final result = results.first as http.StreamedResponse;
+        status = result.statusCode;
+        requestId = _safeDiagnostic(result.headers['x-amz-request-id']);
+        check();
+        if (status != 200 && status != 412) {
+          final bytes = <int>[];
+          await for (final chunk in result.stream) {
+            final remaining = 16384 - bytes.length;
+            bytes.addAll(chunk.take(remaining));
+            if (bytes.length == 16384) break;
+          }
+          check();
+          throw _storageFailure(status!, bytes, requestId, subject);
+        }
         await result.stream.drain<void>();
         return result;
-      })().timeout(const Duration(minutes: 10));
-      if (response.statusCode != 200 && response.statusCode != 412) {
-        throw const AccountFailure(
-          'waiting_network',
-          'Chưa tải được gói. Có thể thử lại snapshot này.',
-        );
-      }
+      })().timeout(transferTimeout);
+      check();
+      assert(response.statusCode == 200 || response.statusCode == 412);
     } on http.ClientException {
-      throw const AccountFailure(
+      check();
+      if (status != null && status != 200 && status != 412) {
+        throw _storageFailure(status!, const [], requestId, subject);
+      }
+      throw AccountFailure(
         'waiting_network',
-        'Tác vụ bị ngắt. Dữ liệu cục bộ được giữ.',
+        'Kết nối bị ngắt khi tải lên $subject. Dữ liệu được giữ trên thiết bị.',
       );
     } on TimeoutException {
-      throw const AccountFailure('unconfirmed', 'Tải gói quá thời gian chờ.');
+      check();
+      if (status != null && status != 200 && status != 412) {
+        throw _storageFailure(status!, const [], requestId, subject);
+      }
+      throw AccountFailure(
+        'unconfirmed',
+        'Tải lên $subject quá thời gian chờ.',
+        httpStatus: status,
+        requestId: requestId,
+      );
+    } catch (error) {
+      check();
+      if (error is! AccountFailure &&
+          status != null &&
+          status != 200 &&
+          status != 412) {
+        throw _storageFailure(status!, const [], requestId, subject);
+      }
+      rethrow;
     } finally {
       _active.remove(client);
       client.close();
     }
   }
 
+  static String? _safeDiagnostic(String? value) =>
+      value != null && RegExp(r'^[A-Za-z0-9_+/=.-]{1,128}$').hasMatch(value)
+      ? value
+      : null;
+
+  AccountFailure _storageFailure(
+    int status,
+    List<int> bytes,
+    String? requestId,
+    String subject,
+  ) {
+    String? storageCode;
+    try {
+      final root = XmlDocument.parse(utf8.decode(bytes)).rootElement;
+      if (root.name.local == 'Error') {
+        storageCode = _safeDiagnostic(root.getElement('Code')?.innerText);
+        requestId ??= _safeDiagnostic(root.getElement('RequestId')?.innerText);
+      }
+    } catch (_) {
+      /* Preserve HTTP diagnostics when the response is malformed. */
+    }
+    final String code, message;
+    if (['ExpiredToken', 'RequestExpired'].contains(storageCode) ||
+        (storageCode == 'AccessDenied' && _expiredResponse(bytes))) {
+      code = 'storage_url_expired';
+      message = 'Liên kết tải lên $subject đã hết hạn. Hãy thử lại.';
+    } else if (storageCode == 'SignatureDoesNotMatch' ||
+        storageCode == 'AuthorizationHeaderMalformed') {
+      code = 'storage_signature_invalid';
+      message =
+          'Chữ ký tải lên $subject không hợp lệ. Cần kiểm tra cấu hình dịch vụ lưu trữ.';
+    } else if ([
+      'BadDigest',
+      'InvalidDigest',
+      'ChecksumMismatch',
+    ].contains(storageCode)) {
+      code = 'storage_checksum_mismatch';
+      message =
+          'Kiểm tra toàn vẹn $subject không khớp. Dữ liệu được giữ trên thiết bị.';
+    } else if (status == 413 || storageCode == 'EntityTooLarge') {
+      code = 'storage_file_limit';
+      message = '$subject vượt giới hạn dung lượng cho phép.';
+    } else if (status == 429 || status >= 500 || storageCode == 'SlowDown') {
+      code = 'storage_unavailable';
+      message =
+          'Dịch vụ lưu trữ tạm thời chưa xử lý được $subject. Hãy thử lại sau.';
+    } else if (status == 401 ||
+        status == 403 ||
+        [
+          'NoSuchBucket',
+          'PermanentRedirect',
+          'InvalidAccessKeyId',
+        ].contains(storageCode)) {
+      code = 'storage_not_configured';
+      message =
+          'Dịch vụ lưu trữ chưa được cấu hình đúng. Chưa tải lên được $subject.';
+    } else {
+      code = 'storage_upload_failed';
+      message =
+          'Dịch vụ lưu trữ từ chối tải lên $subject. Dữ liệu được giữ trên thiết bị.';
+    }
+    developer.log(
+      'upload_failed http=$status code=${storageCode ?? 'unknown'} requestId=${requestId ?? 'unknown'}',
+      name: 'MemoMind.storage',
+    );
+    return AccountFailure(
+      code,
+      message,
+      httpStatus: status,
+      storageCode: storageCode,
+      requestId: requestId,
+    );
+  }
+
+  static bool _expiredResponse(List<int> bytes) {
+    try {
+      final message = XmlDocument.parse(utf8.decode(bytes)).rootElement
+          .getElement('Message')
+          ?.innerText;
+      return message == 'Request has expired' ||
+          message == 'Request has expired.';
+    } catch (_) {
+      return false;
+    }
+  }
+
   Future<void> download(String url, File destination) async {
+    final subject = apiPath == 'sync' ? 'ảnh/PDF' : 'bản sao';
     final client = http.Client();
     _active.add(client);
     var timedOut = false;
@@ -238,7 +382,7 @@ class BackupApiClient {
           .send(http.Request('GET', Uri.parse(url)))
           .timeout(const Duration(minutes: 10));
       if (response.statusCode != 200) {
-        throw const AccountFailure('download_failed', 'Không thể tải bản sao.');
+        throw AccountFailure('download_failed', 'Chưa tải về được $subject.');
       }
       final sink = destination.openWrite();
       var total = 0;
@@ -248,9 +392,9 @@ class BackupApiClient {
         )) {
           total += chunk.length;
           if (total > 100 * 1024 * 1024) {
-            throw const AccountFailure(
+            throw AccountFailure(
               'backup_limit',
-              'Gói vượt giới hạn 100 MiB.',
+              '$subject vượt giới hạn 100 MiB.',
             );
           }
           sink.add(chunk);
@@ -262,13 +406,13 @@ class BackupApiClient {
       throw AccountFailure(
         timedOut ? 'backup_timeout' : 'waiting_network',
         timedOut
-            ? 'Tải bản sao quá thời gian chờ 10 phút.'
+            ? 'Tải về $subject quá thời gian chờ 10 phút.'
             : 'Mạng bị ngắt hoặc tác vụ đã dừng.',
       );
     } on TimeoutException {
-      throw const AccountFailure(
+      throw AccountFailure(
         'backup_timeout',
-        'Tải bản sao quá thời gian chờ 10 phút.',
+        'Tải về $subject quá thời gian chờ 10 phút.',
       );
     } finally {
       deadline.cancel();
