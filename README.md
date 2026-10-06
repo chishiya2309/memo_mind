@@ -138,6 +138,20 @@ Do not commit `.env` files, service account keys, or other server/production cre
 
 Be Vietnam Pro font files are bundled for offline use. Its license is in `licenses/BeVietnamPro-OFL.txt`.
 
+## App branding and startup
+
+Android displays the name **MemoMind** with an indigo flashcard/M icon. Vector resources cover legacy launchers (API 24–25), adaptive icons (API 26+), monochrome themed icons (API 33+), and light/dark native launch screens including Android 12+. The editable reference is `assets/branding/memo_mind.svg`; keep its 108-unit geometry aligned with `MemoMarkPainter` and the Android mark/splash drawables when changing the design.
+
+The Flutter welcome holds for at least two seconds after its first frame, while workspace initialization, import recovery, and the initial dashboard load run underneath. It fades out in 250 ms once content is ready, including the existing dashboard error state. Workspace initialization failures offer **Thử lại** without restarting the welcome timer. Reduced motion displays the static design and skips the exit fade. Resume and workspace/account changes do not replay the welcome; notification launch routing waits for the welcome to close.
+
+To export review PNGs with the bundled font into `build/branding/` (PowerShell):
+
+```powershell
+$env:MEMOMIND_BRAND_PREVIEW = '1'
+flutter test test/widget/startup_welcome_test.dart
+Remove-Item Env:MEMOMIND_BRAND_PREVIEW
+```
+
 ## Account and synchronization
 
 Open **Cá nhân → Cài đặt → Tài khoản và đồng bộ**. Firebase Auth supports Google/email, verification, password reset and provider linking. A verified account uses one canonical study library on every device. Guest lessons can be added with consent or kept separately. Logout preserves local data and offers synchronization first when changes are pending.

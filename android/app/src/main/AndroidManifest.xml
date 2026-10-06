@@ -7,7 +7,7 @@
     <uses-feature android:name="android.hardware.camera.any" android:required="false" />
 
     <application
-        android:label="memo_mind"
+        android:label="MemoMind"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity

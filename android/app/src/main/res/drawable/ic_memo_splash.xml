@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Same 108-unit mark as Flutter MemoMarkPainter. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="288dp" android:height="288dp"
+    android:viewportWidth="216" android:viewportHeight="216">
+    <group android:translateX="54" android:translateY="54">
+        <path android:fillColor="#4F46E5" android:pathData="M26,0 L82,0 A26,26 0,0 1,108,26 L108,82 A26,26 0,0 1,82,108 L26,108 A26,26 0,0 1,0,82 L0,26 A26,26 0,0 1,26,0 Z" />
+    <group android:pivotX="54" android:pivotY="54" android:scaleX="0.85" android:scaleY="0.85">
+        <group android:pivotX="43" android:pivotY="55" android:rotation="-12">
+            <path android:fillColor="#FFFFFF" android:fillAlpha="0.24" android:pathData="M31,32 L55,32 A5,5 0,0 1,60,37 L60,73 A5,5 0,0 1,55,78 L31,78 A5,5 0,0 1,26,73 L26,37 A5,5 0,0 1,31,32 Z" />
+        </group>
+        <path android:fillColor="#FFFFFF" android:pathData="M31,70 L31,39 Q31,34 36,34 L40,34 Q42,34 44,37 L54,52 L64,37 Q66,34 68,34 L72,34 Q77,34 77,39 L77,70 Q77,75 72,75 L66,75 L66,51 L57,65 Q54,69 51,65 L42,51 L42,75 L36,75 Q31,75 31,70 Z" />
+        <path android:fillColor="#FFFFFF" android:pathData="M73,23 L75,28 L80,30 L75,32 L73,37 L71,32 L66,30 L71,28 Z" />
+    </group>
+    </group>
+</vector>
+
