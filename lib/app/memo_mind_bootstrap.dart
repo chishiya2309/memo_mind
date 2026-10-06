@@ -11,7 +11,10 @@ import '../features/account_backup/data/firebase_auth_repository.dart';
 import '../features/account_backup/domain/auth_repository.dart';
 import '../features/account_backup/application/account_backup_controller.dart';
 import '../features/account_backup/presentation/account_backup_screen.dart';
+import '../shared/theme/memo_theme.dart';
 import 'app.dart';
+import 'startup_welcome_controller.dart';
+import 'startup_welcome_gate.dart';
 
 class MemoMindBootstrap extends StatefulWidget {
   const MemoMindBootstrap({super.key});
@@ -21,7 +24,8 @@ class MemoMindBootstrap extends StatefulWidget {
 
 class _MemoMindBootstrapState extends State<MemoMindBootstrap> {
   AccountBackupController? _account;
-  String? _error;
+  final _welcome = StartupWelcomeController();
+  bool _initializing = false;
   int _generation = -1;
   bool _reopenAccount = false;
   bool _accessAllowed = true;
@@ -32,8 +36,12 @@ class _MemoMindBootstrapState extends State<MemoMindBootstrap> {
   }
 
   Future<void> _initialize() async {
+    if (_initializing || !mounted) return;
+    _initializing = true;
+    _welcome.markWaiting();
     if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) {
       setState(() => _generation = 0);
+      _initializing = false;
       return;
     }
     try {
@@ -63,12 +71,14 @@ class _MemoMindBootstrapState extends State<MemoMindBootstrap> {
         auth: auth,
         workspaces: workspaces,
       );
+      if (!mounted) {
+        account.dispose();
+        return;
+      }
       account.addListener(_changed);
-      if (!mounted) return;
       setState(() {
         _account = account;
         _generation = workspaces.current!.generation;
-        _error = null;
       });
       if (auth.current?.emailVerified == true) {
         unawaited(
@@ -79,11 +89,12 @@ class _MemoMindBootstrapState extends State<MemoMindBootstrap> {
       }
     } catch (_) {
       if (mounted) {
-        setState(
-          () => _error =
-              'Không thể mở kho dữ liệu. Dữ liệu cũ được giữ; hãy thử lại.',
+        _welcome.fail(
+          'Không thể mở kho dữ liệu. Dữ liệu cũ được giữ; hãy thử lại.',
         );
       }
+    } finally {
+      _initializing = false;
     }
   }
 
@@ -91,6 +102,7 @@ class _MemoMindBootstrapState extends State<MemoMindBootstrap> {
     final next = _account!.workspace.generation;
     final access = _account!.accessAllowed;
     if (!mounted || (next == _generation && access == _accessAllowed)) return;
+    _welcome.markWaiting();
     setState(() {
       _reopenAccount = _account!.accountScreenVisible;
       _generation = next;
@@ -102,38 +114,43 @@ class _MemoMindBootstrapState extends State<MemoMindBootstrap> {
   void dispose() {
     _account?.removeListener(_changed);
     _account?.dispose();
+    _welcome.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
+    return StartupWelcomeGate(
+      controller: _welcome,
+      onRetry: _initialize,
+      child: _content(),
+    );
+  }
+
+  Widget _content() {
     if (!_accessAllowed && _account != null) {
-      return MaterialApp(home: AccountBackupScreen(controller: _account!));
-    }
-    if (_generation >= 0) {
-      return MemoMindApp(
-        key: ValueKey(_generation),
-        account: _account,
-        reopenAccount: _reopenAccount,
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && !_accessAllowed) _welcome.markReady();
+      });
+      return MaterialApp(
+        debugShowCheckedModeBanner: false,
+        theme: MemoTheme.light,
+        darkTheme: MemoTheme.dark,
+        home: AccountBackupScreen(controller: _account!),
       );
     }
-    return MaterialApp(
-      home: Scaffold(
-        body: Center(
-          child: _error == null
-              ? const CircularProgressIndicator()
-              : Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(_error!),
-                    TextButton(
-                      onPressed: _initialize,
-                      child: const Text('Thử lại'),
-                    ),
-                  ],
-                ),
-        ),
-      ),
-    );
+    if (_generation >= 0) {
+      final generation = _generation;
+      return MemoMindApp(
+        key: ValueKey(generation),
+        account: _account,
+        reopenAccount: _reopenAccount,
+        startupRevealed: _welcome.startupRevealed,
+        onStartupReady: () {
+          if (mounted && _generation == generation) _welcome.markReady();
+        },
+      );
+    }
+    return const SizedBox.expand();
   }
 }

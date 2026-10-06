@@ -33,9 +33,21 @@ import '../features/statistics/application/statistics_controller.dart';
 import '../features/statistics/data/local_statistics_repository.dart';
 
 class MemoMindApp extends StatefulWidget {
-  const MemoMindApp({super.key, this.account, this.reopenAccount = false});
+  const MemoMindApp({
+    super.key,
+    this.account,
+    this.reopenAccount = false,
+    this.onStartupReady,
+    this.startupRevealed,
+  });
   final AccountBackupController? account;
   final bool reopenAccount;
+
+  /// Called once after the first dashboard result (including an error) renders.
+  final VoidCallback? onStartupReady;
+
+  /// Startup navigation waits until the welcome overlay is gone.
+  final Future<void>? startupRevealed;
 
   @override
   State<MemoMindApp> createState() => _MemoMindAppState();
@@ -55,6 +67,7 @@ class _MemoMindAppState extends State<MemoMindApp> with WidgetsBindingObserver {
   late final Future<void> _recovery;
   final _reviewRepository = LocalReviewRepository();
   late Future<HomeDashboardData> _dashboard;
+  bool _startupReadyReported = false;
 
   @override
   void initState() {
@@ -81,6 +94,7 @@ class _MemoMindAppState extends State<MemoMindApp> with WidgetsBindingObserver {
         await _recovery;
         await WorkspaceRuntime.database.database;
         await _navigatorReady.future;
+        await widget.startupRevealed;
       },
       open: _openDueCards,
       refresh: () {
@@ -112,13 +126,19 @@ class _MemoMindAppState extends State<MemoMindApp> with WidgetsBindingObserver {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!_navigatorReady.isCompleted) _navigatorReady.complete();
       if (widget.reopenAccount && widget.account != null) {
-        _navigator.currentState?.push(
-          MaterialPageRoute<void>(
-            builder: (_) => AccountBackupScreen(controller: widget.account!),
-          ),
-        );
+        unawaited(_reopenAccount());
       }
     });
+  }
+
+  Future<void> _reopenAccount() async {
+    await widget.startupRevealed;
+    if (!mounted) return;
+    await _navigator.currentState?.push(
+      MaterialPageRoute<void>(
+        builder: (_) => AccountBackupScreen(controller: widget.account!),
+      ),
+    );
   }
 
   Future<void> _initializeReminders() async {
@@ -328,6 +348,12 @@ class _MemoMindAppState extends State<MemoMindApp> with WidgetsBindingObserver {
               return const Scaffold(
                 body: Center(child: CircularProgressIndicator()),
               );
+            }
+            if (!_startupReadyReported) {
+              _startupReadyReported = true;
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (mounted) widget.onStartupReady?.call();
+              });
             }
             return HomeScreen(
               data:
