@@ -1,9 +1,18 @@
 const express = require('express');
 const cors = require('cors');
 const { createProviders } = require('./providers');
-const { ApiError, validateRequest, filterCards, parseEnvelope } = require('./validation');
+const { ApiError, validateRequest, filterCards, reviewCards, parseEnvelope } = require('./validation');
 const MAX_BATCH_CHARS = 8000;
-const MAX_AUTO_CARDS_PER_BATCH = 4;
+function allocateLimits(batches, limit) {
+  const weights = batches.map(batch => batch.reduce((n, b) => n + b.normalizedText.length, 0));
+  const total = weights.reduce((a, b) => a + b, 0);
+  const exact = weights.map(w => limit * w / total);
+  const limits = exact.map(Math.floor);
+  const order = exact.map((n, i) => i).sort((a, b) => (exact[b] - limits[b]) - (exact[a] - limits[a]) || a - b);
+  const remainder = limit - limits.reduce((a, b) => a + b, 0);
+  for (let i = 0; i < remainder; i++) limits[order[i]]++;
+  return limits;
+}
 
 function splitLongText(text, maxChars) {
   const pieces = [];
@@ -78,18 +87,16 @@ function createApp({ providers = createProviders(), deadlineMs = 75000, rateLimi
         quantityMode: 'manual', desiredCount: body.desiredCount ?? 5,
         sourceBlocks: Array.isArray(body.sourceBlocks) ? body.sourceBlocks.map(b => ({ ...b, documentId: b?.documentId ?? body.documentId })) : body.sourceBlocks };
       if (body.desiredCount === 1 && body.types.length === 2) body.types = ['BASIC'];
+      delete body.reviewPolicy;
     }
     const request = validateRequest(body);
     const rawCards = await withinDeadline(async signal => {
       const batches = batchSourceBlocks(request.sourceBlocks);
-      const totalChars = request.sourceBlocks.reduce((total, block) => total + block.normalizedText.length, 0);
+      const limits = allocateLimits(batches, request.limit);
       const cards = [];
-      for (const sourceBlocks of batches) {
-        const batchChars = sourceBlocks.reduce((total, block) => total + block.normalizedText.length, 0);
-        const allocatedLimit = Math.max(1, Math.ceil(request.limit * batchChars / totalChars));
-        const batchLimit = request.quantityMode === 'auto'
-          ? Math.min(MAX_AUTO_CARDS_PER_BATCH, allocatedLimit)
-          : allocatedLimit;
+      for (const [index, sourceBlocks] of batches.entries()) {
+        const batchLimit = limits[index];
+        if (!batchLimit) continue;
         const batchRequest = { ...request, sourceBlocks, limit: batchLimit };
         const first = await providers.generate(batchRequest, signal);
         let parsed = parseEnvelope(first);
@@ -99,6 +106,7 @@ function createApp({ providers = createProviders(), deadlineMs = 75000, rateLimi
       }
       return cards;
     }, deadlineMs);
+    if (request.reviewPolicy === 'user_review') return res.json(reviewCards(rawCards, request));
     const result = filterCards(rawCards, request);
     if (!result.cards.length) return res.status(422).json({ ...result, error: 'no_valid_cards', message: 'Không có học liệu đạt kiểm tra nguồn và cấu trúc.' });
     if (legacy) {
@@ -133,4 +141,4 @@ function createApp({ providers = createProviders(), deadlineMs = 75000, rateLimi
   });
   return app;
 }
-module.exports = { createApp, withinDeadline };
+module.exports = { createApp, withinDeadline, allocateLimits, batchSourceBlocks };

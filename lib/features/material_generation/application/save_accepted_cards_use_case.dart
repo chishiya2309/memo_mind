@@ -26,12 +26,15 @@ class SaveAcceptedCardsUseCase {
     final now = DateTime.now();
     final cards = <CardEntity>[];
     for (final draft in accepted) {
-      final block = blocks[draft.sourceBlockId];
-      MaterialValidator.validate(
-        draft,
-        sourceBlock: block,
-        documentId: documentId,
-      );
+      final candidate = blocks[draft.sourceBlockId];
+      final block =
+          candidate != null &&
+              !candidate.isDeleted &&
+              candidate.documentId == documentId
+          ? candidate
+          : null;
+      final errors = MaterialValidator.errors(draft, requireSource: false);
+      if (errors.isNotEmpty) throw FormatException(errors.values.first);
       cards.add(
         CardEntity(
           id: draft.id,
@@ -43,9 +46,13 @@ class SaveAcceptedCardsUseCase {
           correctOptionId: draft.correctOptionId,
           explanation: draft.explanation,
           sourceDocumentId: documentId,
-          sourcePageId: block!.pageId,
-          sourcePageNumber: draft.sourcePage,
-          sourceBlockId: draft.sourceBlockId,
+          sourcePageId: block?.pageNumber == draft.sourcePage
+              ? block?.pageId
+              : null,
+          sourcePageNumber: block?.pageNumber == draft.sourcePage
+              ? draft.sourcePage
+              : null,
+          sourceBlockId: block?.blockId,
           sourceQuote: draft.sourceQuote,
           confidence: draft.confidence,
           dueDate: now,

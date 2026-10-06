@@ -169,7 +169,7 @@ class _MaterialGenerationConfigModalState
               ),
             const SizedBox(height: 8),
             const Text(
-              'Kết quả có thể ít hơn nếu nguồn không đủ hoặc thẻ không đạt kiểm tra.',
+              'Kết quả có thể ít hơn nếu nguồn không đủ. Tất cả kết quả AI sẽ được hiển thị để bạn duyệt.',
             ),
             ExpansionTile(
               tilePadding: EdgeInsets.zero,

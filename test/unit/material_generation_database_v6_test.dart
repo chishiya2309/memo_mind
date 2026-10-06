@@ -94,46 +94,41 @@ CardEntity card(
 
 void main() {
   setUpAll(sqfliteFfiInit);
-  test(
-    'current schema persists all types and MCQ answer/payload with source metadata',
-    () async {
-      final db = await database();
-      addTearDown(db.close);
-      await seed(db);
-      final repo = LocalDeckRepository(
-        database: MemoMindDatabase.forTesting(db),
-      );
-      final deck = await repo.createDeck(title: 'D');
-      await repo.saveCardsToDeck(
-        deckId: deck.id,
-        cards: [
-          card('basic', CardType.basic).copyWith(deckId: deck.id),
-          card('cloze', CardType.cloze).copyWith(deckId: deck.id),
-          card('mcq', CardType.mcq).copyWith(deckId: deck.id),
-        ],
-      );
-      final saved = await repo.getCardsForDeck(deck.id);
-      expect(saved.map((c) => c.type), [
-        CardType.basic,
-        CardType.cloze,
-        CardType.mcq,
-      ]);
-      expect(saved.last.back, 'Đúng');
-      expect(saved.last.correctOptionId, 'A');
-      expect(
-        jsonDecode(
-          (await db.query(
-                'cards',
-                where: 'card_id = ?',
-                whereArgs: ['mcq'],
-              )).single['mcq_payload']
-              as String,
-        )['options'],
-        hasLength(4),
-      );
-      expect((await repo.getDeckById(deck.id))?.cardCount, 3);
-    },
-  );
+  test('current schema persists all types and MCQ answer/payload with source metadata', () async {
+    final db = await database();
+    addTearDown(db.close);
+    await seed(db);
+    final repo = LocalDeckRepository(database: MemoMindDatabase.forTesting(db));
+    final deck = await repo.createDeck(title: 'D');
+    await repo.saveCardsToDeck(
+      deckId: deck.id,
+      cards: [
+        card('basic', CardType.basic).copyWith(deckId: deck.id),
+        card('cloze', CardType.cloze).copyWith(deckId: deck.id),
+        card('mcq', CardType.mcq).copyWith(deckId: deck.id),
+      ],
+    );
+    final saved = await repo.getCardsForDeck(deck.id);
+    expect(saved.map((c) => c.type), [
+      CardType.basic,
+      CardType.cloze,
+      CardType.mcq,
+    ]);
+    expect(saved.last.back, 'Đúng');
+    expect(saved.last.correctOptionId, 'A');
+    expect(
+      jsonDecode(
+        (await db.query(
+              'cards',
+              where: 'card_id = ?',
+              whereArgs: ['mcq'],
+            )).single['mcq_payload']
+            as String,
+      )['options'],
+      hasLength(4),
+    );
+    expect((await repo.getDeckById(deck.id))?.cardCount, 3);
+  });
   test('failure on second insert rolls back cards and deck count', () async {
     final db = await database();
     addTearDown(db.close);
@@ -155,39 +150,51 @@ void main() {
     expect(await repo.getCardsForDeck(deck.id), isEmpty);
     expect((await repo.getDeckById(deck.id))?.cardCount, 0);
   });
-  test('revalidates source quote, page, document and verified status inside transaction', () async {
-    final db = await database();
-    addTearDown(db.close);
-    await seed(db);
-    final repo = LocalDeckRepository(database: MemoMindDatabase.forTesting(db));
-    final deck = await repo.createDeck(title: 'D');
-    for (final invalid in [
-      card('quote', CardType.basic, quote: 'not in source'),
-      card('document', CardType.basic, document: 'other'),
-      card('page', CardType.basic, pageNumber: 2),
-    ]) {
-      await expectLater(
-        repo.saveCardsToDeck(
-          deckId: deck.id,
-          cards: [invalid.copyWith(deckId: deck.id)],
-        ),
-        throwsA(isA<Exception>()),
+  test(
+    'source warnings do not block saving and invalid links are cleared',
+    () async {
+      final db = await database();
+      addTearDown(db.close);
+      await seed(db);
+      final repo = LocalDeckRepository(
+        database: MemoMindDatabase.forTesting(db),
       );
-      expect(await repo.getCardsForDeck(deck.id), isEmpty);
-    }
-    await db.update(
-      'source_blocks',
-      {'status': 'deleted'},
-      where: 'block_id = ?',
-      whereArgs: ['b'],
-    );
-    await expectLater(
-      repo.saveCardsToDeck(
+      final deck = await repo.createDeck(title: 'D');
+      await repo.saveCardsToDeck(
+        deckId: deck.id,
+        cards: [
+          card(
+            'quote',
+            CardType.basic,
+            quote: 'not in source',
+          ).copyWith(deckId: deck.id),
+          card(
+            'document',
+            CardType.basic,
+            document: 'other',
+          ).copyWith(deckId: deck.id),
+          card('page', CardType.basic, pageNumber: 2).copyWith(deckId: deck.id),
+        ],
+      );
+      final saved = await repo.getCardsForDeck(deck.id);
+      expect(saved.length, 3);
+      expect(saved[0].sourceQuote, 'not in source');
+      expect(saved[0].sourceBlockId, 'b');
+      expect(saved[1].sourceBlockId, isNull);
+      expect(saved[1].sourcePageId, isNull);
+      expect(saved[2].sourcePageId, isNull);
+      await db.update(
+        'source_blocks',
+        {'status': 'deleted'},
+        where: 'block_id = ?',
+        whereArgs: ['b'],
+      );
+      await repo.saveCardsToDeck(
         deckId: deck.id,
         cards: [card('deleted', CardType.basic).copyWith(deckId: deck.id)],
-      ),
-      throwsA(isA<Exception>()),
-    );
-    expect((await repo.getDeckById(deck.id))?.cardCount, 0);
-  });
+      );
+      expect((await repo.getCardsForDeck(deck.id)).last.sourceBlockId, isNull);
+      expect((await repo.getDeckById(deck.id))?.cardCount, 4);
+    },
+  );
 }

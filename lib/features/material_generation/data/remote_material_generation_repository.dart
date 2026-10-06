@@ -34,6 +34,12 @@ class RemoteMaterialGenerationRepository
       desiredCount: 1,
       sourceBlocks: [sourceBlock],
     );
+    if (result.cards.isEmpty) {
+      throw const MaterialGenerationFailure(
+        MaterialGenerationFailureCode.noValidCards,
+        'AI chưa tạo được thẻ từ nguồn này. Bạn có thể thử lại hoặc chỉnh sửa thẻ.',
+      );
+    }
     return result.cards.first;
   }
 }

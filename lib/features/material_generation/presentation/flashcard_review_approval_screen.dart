@@ -62,6 +62,9 @@ class _FlashcardReviewApprovalScreenState
   late final SaveAcceptedCardsUseCase _saveUseCase;
   late Deck _deck;
   bool _isSaving = false;
+  bool _allowExit = false;
+  bool _askingExit = false;
+  int _filter = 0;
   bool get _busy => _isSaving || _regeneratingCardIds.isNotEmpty;
   final Set<String> _regeneratingCardIds = {};
 
@@ -83,27 +86,52 @@ class _FlashcardReviewApprovalScreenState
 
   int get _acceptedCount => _cards.where((c) => c.isAccepted).length;
 
+  List<MaterialIssue> _issues(MaterialDraft card) => MaterialValidator.issues(
+    card,
+    sourceBlock: _blocksMap[card.sourceBlockId],
+    documentId: widget.documentId,
+    cards: _cards,
+  );
+  bool _canSave(MaterialDraft card) => !_issues(card).any((i) => i.isError);
   bool _validate(MaterialDraft card) {
-    try {
-      MaterialValidator.validate(
-        card,
-        sourceBlock: _blocksMap[card.sourceBlockId],
-        documentId: widget.documentId,
-      );
-      return true;
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            e is MaterialGenerationFailure
-                ? e.message
-                : e is FormatException
-                ? e.message
-                : 'Thẻ không hợp lệ.',
-          ),
-        ),
-      );
-      return false;
+    final errors = _issues(card).where((i) => i.isError);
+    if (errors.isEmpty) return true;
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(errors.first.message)));
+    return false;
+  }
+
+  Future<void> _requestExit() async {
+    if (_busy || _askingExit) return;
+    _askingExit = true;
+    final leave =
+        _cards.isEmpty ||
+        await showDialog<bool>(
+              context: context,
+              builder: (context) => AlertDialog(
+                title: const Text('Rời màn duyệt?'),
+                content: const Text(
+                  'Các kết quả chưa lưu sẽ mất. Văn bản OCR đã xác nhận vẫn được giữ.',
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(context, false),
+                    child: const Text('Tiếp tục duyệt'),
+                  ),
+                  FilledButton(
+                    onPressed: () => Navigator.pop(context, true),
+                    child: const Text('Rời màn hình'),
+                  ),
+                ],
+              ),
+            ) ==
+            true;
+    _askingExit = false;
+    if (leave && mounted) {
+      setState(() => _allowExit = true);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) Navigator.of(context).pop();
+      });
     }
   }
 
@@ -126,59 +154,109 @@ class _FlashcardReviewApprovalScreenState
     final index = _cards.indexWhere((c) => c.id == card.id);
     if (index == -1) return;
 
-    setState(() {
-      _cards.removeAt(index);
-    });
+    setState(() => _cards.removeAt(index));
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: const Text('Đã bỏ thẻ khỏi danh sách.'),
+        action: SnackBarAction(
+          label: 'Hoàn tác',
+          onPressed: () {
+            if (mounted && !_busy && !_cards.any((c) => c.id == card.id)) {
+              setState(
+                () => _cards.insert(index.clamp(0, _cards.length), card),
+              );
+            }
+          },
+        ),
+      ),
+    );
   }
 
   void _acceptAll() {
     if (_busy) return;
+    var skipped = 0;
     setState(() {
       for (var i = 0; i < _cards.length; i++) {
-        if (!_cards[i].isRejected && _validate(_cards[i])) {
+        if (_canSave(_cards[i])) {
           _cards[i] = _cards[i].copyWith(status: DraftCardStatus.accepted);
+        } else {
+          skipped++;
         }
       }
     });
+    if (skipped > 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            '$skipped thẻ cần sửa trước khi chọn. Các thẻ này vẫn có trong danh sách.',
+          ),
+        ),
+      );
+    }
   }
 
   Future<void> _regenerateCard(MaterialDraft card) async {
     if (_busy) return;
-    final block = _blocksMap[card.sourceBlockId];
+    var block = _blocksMap[card.sourceBlockId];
     if (block == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Không tìm thấy khối nguồn tương ứng.')),
+      block = await showDialog<SourceBlock>(
+        context: context,
+        builder: (context) => SimpleDialog(
+          title: const Text('Chọn nguồn để tạo lại'),
+          children: [
+            for (final source in widget.sourceBlocks)
+              SimpleDialogOption(
+                onPressed: () => Navigator.pop(context, source),
+                child: Text(
+                  'Trang ${source.pageNumber}: ${source.normalizedText}',
+                  maxLines: 3,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+          ],
+        ),
       );
-      return;
+      if (block == null || !mounted) return;
     }
 
     setState(() => _regeneratingCardIds.add(card.id));
 
     try {
-      final newCard = await widget.generationRepository.regenerateSingleCard(
-        sourceBlock: block,
-        type: card.type,
-      );
-
-      if (newCard.type != card.type ||
-          newCard.sourceBlockId != card.sourceBlockId) {
-        throw const FormatException('Thẻ tạo lại sai loại hoặc nguồn.');
-      }
-      MaterialValidator.validate(
-        newCard,
-        sourceBlock: block,
+      final result = await widget.generationRepository.generateMaterials(
         documentId: widget.documentId,
+        types: {card.type},
+        quantityMode: QuantityMode.manual,
+        desiredCount: 1,
+        sourceBlocks: [block],
       );
+      if (result.cards.isEmpty) {
+        throw const MaterialGenerationFailure(
+          MaterialGenerationFailureCode.noValidCards,
+          'AI chưa tạo được thẻ; thẻ hiện tại vẫn được giữ.',
+        );
+      }
+
       final index = _cards.indexWhere((c) => c.id == card.id);
       if (index != -1 && mounted) {
         setState(() {
-          _cards[index] = newCard.copyWith(
+          _cards[index] = result.cards.first.copyWith(
             id: card.id,
             status: DraftCardStatus.pending,
           );
+          _cards.addAll(
+            result.cards
+                .skip(1)
+                .map((c) => c.copyWith(status: DraftCardStatus.pending)),
+          );
         });
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Đã tạo lại thẻ thành công.')),
+          SnackBar(
+            content: Text(
+              result.cards.length == 1
+                  ? 'Đã tạo lại thẻ. Hãy xem và chọn lại.'
+                  : 'AI trả ${result.cards.length} thẻ; tất cả được giữ để bạn duyệt.',
+            ),
+          ),
         );
       }
     } catch (e) {
@@ -255,15 +333,19 @@ class _FlashcardReviewApprovalScreenState
       );
 
       if (mounted) {
-        // Luồng 36: Hiển thị thông báo thành công
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Đã thêm $savedCount thẻ vào deck "${deck.title}".'),
-            backgroundColor: MemoPalette.of(context).success,
-          ),
-        );
-        setState(() => _isSaving = false);
-        Navigator.of(context).pop();
+        ScaffoldMessenger.of(context).clearSnackBars();
+        setState(() {
+          _isSaving = false;
+          _allowExit = true;
+        });
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) {
+            Navigator.of(context).pop<MaterialSaveResult>((
+              deckId: deck.id,
+              savedCount: savedCount,
+            ));
+          }
+        });
       }
     } on MaterialGenerationFailure catch (e) {
       if (mounted) {
@@ -291,21 +373,33 @@ class _FlashcardReviewApprovalScreenState
   Widget build(BuildContext context) {
     final palette = MemoPalette.of(context);
     final theme = Theme.of(context);
-
-    return PopScope(
-      canPop: !_isSaving,
+    final visible = _cards.where((card) {
+      final issues = _issues(card);
+      return _filter == 0 ||
+          (_filter == 1
+              ? issues.any((i) => !i.isError)
+              : issues.any((i) => i.isError));
+    }).toList()..sort((a, b) => a.type.index.compareTo(b.type.index));
+    final warningCount = _cards
+        .where((c) => _issues(c).any((i) => !i.isError))
+        .length;
+    final errorCount = _cards.where((c) => !_canSave(c)).length;
+    return PopScope<MaterialSaveResult>(
+      canPop: _allowExit && !_busy,
+      onPopInvokedWithResult: (didPop, result) {
+        if (!didPop) _requestExit();
+      },
       child: Scaffold(
         appBar: AppBar(
           title: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text(
-                'Duyệt học liệu',
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-              ),
+              const Text('Duyệt học liệu', style: TextStyle(fontSize: 18)),
               Text(
                 widget.documentTitle,
-                style: TextStyle(fontSize: 12, color: palette.textMuted),
+                style: const TextStyle(fontSize: 12),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
               ),
             ],
           ),
@@ -316,9 +410,11 @@ class _FlashcardReviewApprovalScreenState
             ),
           ],
         ),
-        body: Column(
+        body: ListView(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
           children: [
             ListTile(
+              contentPadding: EdgeInsets.zero,
               title: Text('Deck: ${_deck.title}'),
               trailing: TextButton(
                 onPressed: _busy
@@ -347,172 +443,74 @@ class _FlashcardReviewApprovalScreenState
                     ),
                 ],
               ),
-            // Discarded warnings banner (Luồng 24a)
-            if (widget.discardedCount > 0)
-              Container(
-                margin: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 8,
-                ),
-                decoration: BoxDecoration(
-                  color: palette.warning.withValues(alpha: 0.12),
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(
-                    color: palette.warning.withValues(alpha: 0.3),
+            Text(
+              'Tổng cộng ${_cards.length} thẻ • $warningCount có cảnh báo • $errorCount cần sửa',
+            ),
+            const SizedBox(height: 8),
+            Text('Đã chọn $_acceptedCount / ${_cards.length}'),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              children: [
+                for (final (index, label) in [
+                  (0, 'Tất cả'),
+                  (1, 'Có cảnh báo'),
+                  (2, 'Cần sửa'),
+                ])
+                  ChoiceChip(
+                    label: Text(label),
+                    selected: _filter == index,
+                    onSelected: (_) => setState(() => _filter = index),
+                  ),
+              ],
+            ),
+            if (visible.isEmpty)
+              const Padding(
+                padding: EdgeInsets.all(24),
+                child: Text('Không có thẻ nào để hiển thị.'),
+              ),
+            for (var index = 0; index < visible.length; index++) ...[
+              if (index == 0 || visible[index - 1].type != visible[index].type)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  child: Text(
+                    '${visible[index].type.displayName} (${visible.where((c) => c.type == visible[index].type).length})',
+                    style: theme.textTheme.titleMedium,
                   ),
                 ),
-                child: Row(
-                  children: [
-                    Icon(
-                      Icons.info_outline_rounded,
-                      color: palette.warning,
-                      size: 18,
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        'Đã tạo ${widget.initialCards.length} thẻ hợp lệ. Đã tự động loại bỏ ${widget.discardedCount} thẻ không đạt chuẩn nguồn hoặc trùng lặp.',
-                        style: TextStyle(color: palette.warning, fontSize: 12),
-                      ),
-                    ),
-                  ],
+              AbsorbPointer(
+                absorbing: _busy,
+                child: _FlashcardItemCard(
+                  card: visible[index],
+                  palette: palette,
+                  theme: theme,
+                  number: _cards.indexOf(visible[index]) + 1,
+                  issues: _issues(visible[index]),
+                  isRegenerating: _regeneratingCardIds.contains(
+                    visible[index].id,
+                  ),
+                  onToggleAccept: () => _toggleAccept(visible[index]),
+                  onReject: () => _rejectCard(visible[index]),
+                  onEdit: () => _openEditDialog(visible[index]),
+                  onInspectSource: () => _openSourceInspection(visible[index]),
+                  onRegenerate: () => _regenerateCard(visible[index]),
                 ),
               ),
-
-            // Status counter bar
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text(
-                    'Tổng cộng ${_cards.length} thẻ',
-                    style: theme.textTheme.bodyMedium?.copyWith(
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 10,
-                      vertical: 4,
-                    ),
-                    decoration: BoxDecoration(
-                      color: _acceptedCount > 0
-                          ? palette.success.withValues(alpha: 0.15)
-                          : palette.surfaceMuted,
-                      borderRadius: BorderRadius.circular(20),
-                    ),
-                    child: Text(
-                      'Đã chọn $_acceptedCount / ${_cards.length}',
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.bold,
-                        color: _acceptedCount > 0
-                            ? palette.success
-                            : palette.textMuted,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-
-            // Cards list
-            Expanded(
-              child: _cards.isEmpty
-                  ? Center(
-                      child: Text(
-                        'Không có thẻ nào để hiển thị.',
-                        style: TextStyle(color: palette.textMuted),
-                      ),
-                    )
-                  : ListView.separated(
-                      padding: const EdgeInsets.fromLTRB(16, 8, 16, 80),
-                      itemCount: _cards.length,
-                      separatorBuilder: (_, _) => const SizedBox(height: 12),
-                      itemBuilder: (context, index) {
-                        final card = _cards[index];
-                        final isRegenerating = _regeneratingCardIds.contains(
-                          card.id,
-                        );
-                        return Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            if (index == 0 ||
-                                _cards[index - 1].type != card.type)
-                              Padding(
-                                padding: const EdgeInsets.symmetric(
-                                  vertical: 8,
-                                ),
-                                child: Text(
-                                  '${card.type.displayName} (${_cards.where((c) => c.type == card.type).length})',
-                                  style: theme.textTheme.titleMedium,
-                                ),
-                              ),
-                            AbsorbPointer(
-                              absorbing: _busy,
-                              child: _FlashcardItemCard(
-                                card: card,
-                                palette: palette,
-                                theme: theme,
-                                isRegenerating: isRegenerating,
-                                onToggleAccept: () => _toggleAccept(card),
-                                onReject: () => _rejectCard(card),
-                                onEdit: () => _openEditDialog(card),
-                                onInspectSource: () =>
-                                    _openSourceInspection(card),
-                                onRegenerate: () => _regenerateCard(card),
-                              ),
-                            ),
-                          ],
-                        );
-                      },
-                    ),
-            ),
+              const SizedBox(height: 8),
+            ],
           ],
         ),
-        bottomNavigationBar: Container(
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: palette.surface,
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.05),
-                offset: const Offset(0, -4),
-                blurRadius: 10,
-              ),
-            ],
-          ),
-          child: SafeArea(
+        bottomNavigationBar: SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
             child: FilledButton.icon(
-              style: FilledButton.styleFrom(
-                minimumSize: const Size(double.infinity, 50),
-                backgroundColor: palette.primary,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(14),
-                ),
-              ),
-              icon: _isSaving
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: Colors.white,
-                      ),
-                    )
-                  : const Icon(Icons.bookmark_added_rounded),
+              onPressed: _busy || _acceptedCount == 0 ? null : _handleSave,
+              icon: const Icon(Icons.bookmark_added_outlined),
               label: Text(
                 _isSaving
                     ? 'Đang lưu thẻ...'
                     : 'Lưu các thẻ đã chọn ($_acceptedCount)',
-                style: const TextStyle(
-                  fontWeight: FontWeight.bold,
-                  fontSize: 15,
-                ),
               ),
-              onPressed: _busy || _acceptedCount == 0 ? null : _handleSave,
             ),
           ),
         ),
@@ -524,6 +522,8 @@ class _FlashcardReviewApprovalScreenState
 class _FlashcardItemCard extends StatelessWidget {
   const _FlashcardItemCard({
     required this.card,
+    required this.number,
+    required this.issues,
     required this.palette,
     required this.theme,
     required this.isRegenerating,
@@ -535,6 +535,8 @@ class _FlashcardItemCard extends StatelessWidget {
   });
 
   final MaterialDraft card;
+  final int number;
+  final List<MaterialIssue> issues;
   final MemoPalette palette;
   final ThemeData theme;
   final bool isRegenerating;
@@ -548,7 +550,8 @@ class _FlashcardItemCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final isAccepted = card.isAccepted;
     final isRejected = card.isRejected;
-    final needsSourceCheck = card.needsSourceCheck;
+    final needsSourceCheck = issues.isNotEmpty;
+    final needsRepair = issues.any((i) => i.isError);
 
     Color borderColor = palette.outline.withValues(alpha: 0.3);
     if (isAccepted) borderColor = palette.success;
@@ -570,8 +573,11 @@ class _FlashcardItemCard extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             // Top row: Format chip, Source Page badge, Status chip
-            Row(
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
               children: [
+                Text('#$number'),
                 // Format badge
                 Container(
                   padding: const EdgeInsets.symmetric(
@@ -583,7 +589,9 @@ class _FlashcardItemCard extends StatelessWidget {
                     borderRadius: BorderRadius.circular(6),
                   ),
                   child: Text(
-                    card.type.displayName,
+                    card.rawResponse != null
+                        ? 'Lỗi định dạng'
+                        : card.type.displayName,
                     style: TextStyle(
                       fontSize: 11,
                       fontWeight: FontWeight.bold,
@@ -604,12 +612,12 @@ class _FlashcardItemCard extends StatelessWidget {
                     borderRadius: BorderRadius.circular(6),
                   ),
                   child: Text(
-                    'Trang ${card.sourcePage}',
+                    card.sourcePage > 0
+                        ? 'Trang ${card.sourcePage}'
+                        : 'Chưa rõ trang',
                     style: TextStyle(fontSize: 11, color: palette.textMuted),
                   ),
                 ),
-
-                const Spacer(),
 
                 // Status chip
                 if (isAccepted)
@@ -617,13 +625,31 @@ class _FlashcardItemCard extends StatelessWidget {
                 else if (isRejected)
                   _buildStatusChip('Đã loại bỏ', palette.error)
                 else if (needsSourceCheck)
-                  _buildStatusChip('Cần kiểm tra nguồn', palette.warning)
+                  _buildStatusChip(
+                    needsRepair ? 'Cần sửa trước khi lưu' : 'Có cảnh báo',
+                    palette.warning,
+                  )
                 else
                   _buildStatusChip('Chưa duyệt', palette.textMuted),
               ],
             ),
             const SizedBox(height: 12),
 
+            for (final issue in issues)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 6),
+                child: Text(
+                  issue.message,
+                  style: TextStyle(
+                    color: issue.isError ? palette.error : palette.warning,
+                  ),
+                ),
+              ),
+            if (card.rawResponse != null)
+              ExpansionTile(
+                title: const Text('Dữ liệu AI gốc'),
+                children: [SelectableText(card.rawResponse!)],
+              ),
             // Question
             Text(
               'Câu hỏi:',
@@ -723,8 +749,10 @@ class _FlashcardItemCard extends StatelessWidget {
             const Divider(height: 18),
 
             // Actions Toolbar
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            Wrap(
+              alignment: WrapAlignment.spaceBetween,
+              spacing: 8,
+              runSpacing: 8,
               children: [
                 Wrap(
                   spacing: 4,
@@ -775,7 +803,7 @@ class _FlashcardItemCard extends StatelessWidget {
                     size: 18,
                   ),
                   label: Text(isAccepted ? 'Đã chấp nhận' : 'Chấp nhận'),
-                  onPressed: onToggleAccept,
+                  onPressed: needsRepair && !isAccepted ? null : onToggleAccept,
                 ),
               ],
             ),

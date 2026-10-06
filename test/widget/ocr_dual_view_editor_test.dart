@@ -38,6 +38,15 @@ class _FakeOcrRepository implements OcrRepository {
   @override
   Future<void> confirmOcrReview(String documentId) async {
     confirmed = true;
+    for (final page in review.pageReviews) {
+      for (var i = 0; i < page.blocks.length; i++) {
+        if (!page.blocks[i].isDeleted) {
+          page.blocks[i] = page.blocks[i].copyWith(
+            status: BlockStatus.verified,
+          );
+        }
+      }
+    }
   }
 
   @override
@@ -122,74 +131,80 @@ void main() {
     updatedAt: DateTime.now(),
   );
 
-  testWidgets('OcrDualViewEditorScreen displays blocks, filters, edits and confirms', (tester) async {
-    final pageReview = OcrPageReview(
-      pageId: 'p-1',
-      documentId: 'doc-1',
-      pageNumber: 1,
-      status: OcrPageStatus.completed,
-      blocks: [block1, block2],
-      updatedAt: DateTime.now(),
-    );
+  testWidgets(
+    'OcrDualViewEditorScreen displays blocks, filters, edits and confirms',
+    (tester) async {
+      final pageReview = OcrPageReview(
+        pageId: 'p-1',
+        documentId: 'doc-1',
+        pageNumber: 1,
+        status: OcrPageStatus.completed,
+        blocks: [block1, block2],
+        updatedAt: DateTime.now(),
+      );
 
-    final docReview = OcrDocumentReview(
-      document: testDoc,
-      pageReviews: [pageReview],
-    );
+      final docReview = OcrDocumentReview(
+        document: testDoc,
+        pageReviews: [pageReview],
+      );
 
-    final fakeRepo = _FakeOcrRepository(review: docReview);
+      final fakeRepo = _FakeOcrRepository(review: docReview);
 
-    await tester.pumpWidget(
-      MaterialApp(
-        theme: MemoTheme.light,
-        home: OcrDualViewEditorScreen(
-          document: testDoc,
-          ocrRepository: fakeRepo,
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: MemoTheme.light,
+          home: OcrDualViewEditorScreen(
+            document: testDoc,
+            ocrRepository: fakeRepo,
+          ),
         ),
-      ),
-    );
+      );
 
-    await tester.pumpAndSettle();
+      await tester.pumpAndSettle();
 
-    // Verify both blocks displayed
-    expect(find.text('Nội dung câu 1'), findsOneWidget);
-    expect(find.text('Nội dung câu 2 cần kiểm tra'), findsOneWidget);
-    expect(find.text('Cần kiểm tra'), findsWidgets);
+      // Verify both blocks displayed
+      expect(find.text('Nội dung câu 1'), findsOneWidget);
+      expect(find.text('Nội dung câu 2 cần kiểm tra'), findsOneWidget);
+      expect(find.text('Cần kiểm tra'), findsWidgets);
 
-    // Test filter 'Cần kiểm tra (1)'
-    await tester.tap(find.text('Cần kiểm tra (1)'));
-    await tester.pumpAndSettle();
+      // Test filter 'Cần kiểm tra (1)'
+      await tester.tap(find.text('Cần kiểm tra (1)'));
+      await tester.pumpAndSettle();
 
-    expect(find.text('Nội dung câu 1'), findsNothing);
-    expect(find.text('Nội dung câu 2 cần kiểm tra'), findsOneWidget);
+      expect(find.text('Nội dung câu 1'), findsNothing);
+      expect(find.text('Nội dung câu 2 cần kiểm tra'), findsOneWidget);
 
-    // Switch back to 'Tất cả (2)'
-    await tester.tap(find.text('Tất cả (2)'));
-    await tester.pumpAndSettle();
-    expect(find.text('Nội dung câu 1'), findsOneWidget);
+      // Switch back to 'Tất cả (2)'
+      await tester.tap(find.text('Tất cả (2)'));
+      await tester.pumpAndSettle();
+      expect(find.text('Nội dung câu 1'), findsOneWidget);
 
-    // Edit text in block 1
-    final textField = find.byType(TextField).first;
-    await tester.enterText(textField, 'Nội dung câu 1 đã sửa');
-    await tester.pumpAndSettle();
+      // Edit text in block 1
+      final textField = find.byType(TextField).first;
+      await tester.enterText(textField, 'Nội dung câu 1 đã sửa');
+      await tester.pumpAndSettle();
 
-    expect(find.text('Đã sửa'), findsWidgets);
+      expect(find.text('Đã sửa'), findsWidgets);
 
-    // Test Confirm OCR button
-    await tester.tap(find.byKey(const Key('confirm-ocr-btn')));
-    await tester.pumpAndSettle();
+      // Test Confirm OCR button
+      await tester.tap(find.byKey(const Key('confirm-ocr-btn')));
+      await tester.pumpAndSettle();
 
-    // Warning dialog because 1 block is still needsReview
-    expect(find.text('Còn đoạn cần kiểm tra'), findsOneWidget);
-    await tester.tap(find.text('Vẫn xác nhận'));
-    await tester.pumpAndSettle();
+      // Warning dialog because 1 block is still needsReview
+      expect(find.text('Còn đoạn cần kiểm tra'), findsOneWidget);
+      await tester.tap(find.text('Vẫn xác nhận'));
+      await tester.pumpAndSettle();
 
-    // Confirmation dialog
-    expect(find.text('Xác nhận hoàn tất OCR?'), findsOneWidget);
-    await tester.tap(find.byKey(const Key('final-ocr-confirm-btn')));
-    await tester.pumpAndSettle();
-
-    expect(fakeRepo.confirmed, isTrue);
-    expect(find.text('OCR đã được xác nhận!'), findsOneWidget);
-  });
+      expect(fakeRepo.confirmed, isTrue);
+      expect(find.text('Xác nhận hoàn tất OCR?'), findsNothing);
+      expect(find.text('OCR đã được xác nhận!'), findsNothing);
+      expect(find.text('Tạo học liệu'), findsWidgets);
+      Navigator.of(tester.element(find.text('Tạo học liệu').first)).pop();
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('confirm-ocr-btn')));
+      await tester.pumpAndSettle();
+      expect(find.text('Còn đoạn cần kiểm tra'), findsNothing);
+      expect(find.text('Tạo học liệu'), findsWidgets);
+    },
+  );
 }

@@ -31,12 +31,23 @@ function createProviders(env = process.env, fetchImpl = fetch) {
         `Chọn các ý đáng học, tránh hỏi lặp. Loại được chọn: ${request.types.join(', ')}. ` +
         (request.quantityMode === 'auto' ? `Tự quyết định số lượng phù hợp, tối đa ${request.limit}. ` : `Mong muốn ${request.limit} thẻ, không vượt số này. `) +
         `Ưu tiên phân bổ cho các loại đã chọn nhưng không bịa để đủ số. Nguồn không đủ thì trả ít hơn hoặc rỗng. ` +
-        `BASIC: hỏi đáp ngắn. CLOZE: front chứa [...], back là phần khuyết. ` +
-        `MCQ: đúng bốn option A/B/C/D khác nhau, correctOptionId, explanation ngắn; back bằng đáp án đúng. ` +
+        `BASIC: mỗi thẻ tập trung một ý; front bắt buộc là câu hỏi hoặc yêu cầu truy hồi kiến thức, tuyệt đối không chép câu kể chứa sẵn đáp án. Câu hỏi tự đủ ngữ cảnh, back ngắn nhưng giữ điều kiện quan trọng. ` +
+        `CLOZE: front bắt buộc chứa đúng một [...] che một ý trọng tâm, đủ ngữ cảnh xác định đáp án; back chỉ là phần thay vào [...], không lặp tiền tố hoặc cả câu. Ghép front và back phải thành câu đúng. Không làm hỏng công thức. Không chép nguyên cả đoạn, không đưa câu OCR hỏng vào thẻ. ` +
+        `MCQ: đúng bốn option A/B/C/D cùng loại, khác nhau, chỉ một đáp án đúng rõ ràng; correctOptionId, explanation giải thích căn cứ; back bằng đáp án đúng. ` +
+        `Phương án nhiễu dựa vào nhầm lẫn từ nguồn, không thêm kiến thức ngoài; độ dài và cách viết tương đương, front không nói sẵn đáp án; tránh tất cả đều đúng. Phân bố vị trí đáp án đúng đa dạng. ` +
+        `MCQ back phải là TOÀN BỘ nội dung option đúng, không phải chữ A/B/C/D. Mỗi khẳng định trong đáp án đúng và explanation phải được nguồn hỗ trợ. Nếu nguồn chỉ nói cần quy tắc nhưng không nêu quy tắc cụ thể, không tự chọn một quy tắc từ kiến thức của bạn. ` +
+        `Các option phải khác nhau cả về Ý NGHĨA/GIÁ TRỊ: ví dụ 5 và sqrt(25) là cùng đáp án, không được xuất hiện như hai lựa chọn. Tự tính giá trị các lựa chọn số để bảo đảm chỉ một lựa chọn đúng. Không dùng giá trị chưa có dữ liệu để so sánh trong bảng làm phương án của câu hỏi chọn giá trị tốt nhất. ` +
+        `Không tạo câu hỏi đúng/sai rồi thêm hai lựa chọn cho đủ bốn. Với bảng chỉ có ba cấu hình, có thể hỏi chênh lệch giữa hai giá trị thay vì bịa cấu hình thứ tư. ` +
         `Các trường options/correctOptionId/explanation của BASIC/CLOZE phải null. ` +
         `front/back tối đa 2000 ký tự, option 500, explanation/sourceQuote 2000. ` +
         `sourceBlockId và sourcePage phải đúng nguồn; sourceQuote trích NGUYÊN VĂN bằng chứng. ` +
-        `Không suy diễn ngoài nguồn. confidence phải null nếu không có cơ sở đáng tin cậy.` },
+        `Được diễn đạt lại, so sánh và vận dụng đơn giản khi nguồn đủ căn cứ. Không bổ sung kiến thức ngoài nguồn. ` +
+        `Giữ thuật ngữ, ký hiệu, đơn vị và điều kiện của công thức. Không đoán thông tin thiếu hoặc tự khôi phục công thức OCR hỏng; bỏ qua ý không đọc rõ. ` +
+        `Thẻ được học độc lập, người học không nhìn thấy nguồn: với câu hỏi dựa trên ví dụ/bảng, front phải có đủ giả thiết, nhãn, tọa độ hoặc số liệu cần thiết. Không chỉ viết "theo bảng" hoặc chỉ cho k mà thiếu nhãn các láng giềng. ` +
+        `Ví dụ hình thức, không phải dữ liệu để tạo thẻ: với nguồn "M gồm bước P rồi Q.", BASIC front="M thực hiện bước nào trước Q?", back="P"; CLOZE front="M gồm bước [...] rồi Q.", back="P". ` +
+        `Ví dụ MCQ độc lập từ nguồn "R: 2, S: 4, T: 3": front="Trong bảng R=2, S=4, T=3, giá trị S lớn hơn R bao nhiêu?", options A="1", B="2", C="3", D="4", correctOptionId="B", back="2", explanation="4 - 2 = 2". Không tạo thẻ từ các ví dụ hình thức này. ` +
+        `Trước khi trả JSON, tự rà từng thẻ: front thực sự yêu cầu người học trả lời, không lộ đáp án; CLOZE có [...] và back thay vừa chỗ trống; MCQ có đúng một đáp án dựa trên nguồn, không tự thêm giả định. sourceQuote chỉ trích phần bằng chứng cần thiết, tránh cả đoạn dài. ` +
+        `Trích dẫn chỉ giúp đối chiếu, không phải chứng nhận đáp án đúng. confidence phải null nếu không có cơ sở đáng tin cậy.` },
       { role: 'user', content: JSON.stringify({ documentId: request.documentId, sourceBlocks: request.sourceBlocks }) }];
       if (previous !== undefined) messages.push(
         { role: 'assistant', content: previous },

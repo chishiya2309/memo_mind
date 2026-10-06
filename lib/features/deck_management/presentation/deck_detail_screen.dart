@@ -15,9 +15,11 @@ class DeckDetailScreen extends StatefulWidget {
     required this.deckId,
     required this.repository,
     this.reviewRepository,
+    this.savedCount,
   });
 
   final String deckId;
+  final int? savedCount;
   final DeckRepository repository;
   final ReviewRepository? reviewRepository;
 
@@ -40,6 +42,17 @@ class _DeckDetailScreenState extends State<DeckDetailScreen> {
       deckRepository: widget.repository,
     );
     _loadDeck();
+    if (widget.savedCount != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Đã thêm ${widget.savedCount} thẻ vào deck.'),
+            ),
+          );
+        }
+      });
+    }
   }
 
   @override

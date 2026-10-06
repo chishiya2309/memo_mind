@@ -1,4 +1,20 @@
+import 'dart:convert';
+
 import 'package:flutter/foundation.dart';
+
+class MaterialIssue {
+  const MaterialIssue(
+    this.code,
+    this.message, {
+    this.field,
+    this.isError = false,
+  });
+  final String code, message;
+  final String? field;
+  final bool isError;
+}
+
+typedef MaterialSaveResult = ({String deckId, int savedCount});
 
 enum CardType {
   basic,
@@ -49,6 +65,8 @@ class MaterialDraft {
     this.confidence,
     this.status = DraftCardStatus.pending,
     this.isEdited = false,
+    this.rawResponse,
+    this.requestedTypes = const {},
   });
   final String id;
   final CardType type;
@@ -67,12 +85,14 @@ class MaterialDraft {
   final double? confidence;
   final DraftCardStatus status;
   final bool isEdited;
+  final String? rawResponse;
+  final Set<CardType> requestedTypes;
   bool get isAccepted => status == DraftCardStatus.accepted;
   bool get isPending => status == DraftCardStatus.pending;
   bool get isRejected => status == DraftCardStatus.rejected;
   bool get needsSourceCheck => status == DraftCardStatus.needsSourceCheck;
 
-  // Source fields and type deliberately cannot be changed while editing.
+  // Source references remain immutable when users edit card content.
   MaterialDraft copyWith({
     String? id,
     String? front,
@@ -82,21 +102,88 @@ class MaterialDraft {
     String? explanation,
     DraftCardStatus? status,
     bool? isEdited,
+    CardType? type,
+    bool clearRawResponse = false,
   }) => MaterialDraft(
     id: id ?? this.id,
-    type: type,
+    type: type ?? this.type,
     front: front ?? this.front,
     back: back ?? _back,
     sourcePage: sourcePage,
     sourceBlockId: sourceBlockId,
     sourceQuote: sourceQuote,
     options: options == null ? this.options : List.unmodifiable(options),
-    correctOptionId: correctOptionId ?? this.correctOptionId,
-    explanation: explanation ?? this.explanation,
+    correctOptionId: (type ?? this.type) == CardType.mcq
+        ? correctOptionId ?? this.correctOptionId
+        : null,
+    explanation: (type ?? this.type) == CardType.mcq
+        ? explanation ?? this.explanation
+        : null,
     confidence: confidence,
     status: status ?? this.status,
     isEdited: isEdited ?? this.isEdited,
+    rawResponse: clearRawResponse ? null : rawResponse,
+    requestedTypes: requestedTypes,
   );
+  factory MaterialDraft.fromReviewJson(
+    String id,
+    Object? raw, {
+    Set<CardType> requestedTypes = const {},
+  }) {
+    final json = raw is Map<String, dynamic> ? raw : <String, dynamic>{};
+    String text(String key) => json[key] is String ? json[key] as String : '';
+    final type = CardType.values
+        .where((t) => t.wireName == json['type'])
+        .firstOrNull;
+    final confidence = json['confidence'];
+    final options = json['options'];
+    // Preserve the original payload for inspection; no item is discarded.
+    final malformed =
+        type == null ||
+        raw is! Map<String, dynamic> ||
+        json['front'] is! String ||
+        json['back'] is! String ||
+        (type == CardType.mcq &&
+            (options is! List ||
+                options.any(
+                  (o) =>
+                      o is! Map ||
+                      o['optionId'] is! String ||
+                      o['text'] is! String,
+                )));
+    return MaterialDraft(
+      id: id,
+      type: type ?? CardType.basic,
+      front: text('front'),
+      back: text('back'),
+      sourcePage: json['sourcePage'] is int ? json['sourcePage'] as int : 0,
+      sourceBlockId: text('sourceBlockId'),
+      sourceQuote: text('sourceQuote'),
+      options: type == CardType.mcq && options is List
+          ? [
+              for (final o in options)
+                if (o is Map)
+                  McqOption(
+                    optionId: o['optionId'] is String
+                        ? o['optionId'] as String
+                        : '',
+                    text: o['text'] is String ? o['text'] as String : '',
+                  ),
+            ]
+          : const [],
+      correctOptionId: type == CardType.mcq ? text('correctOptionId') : null,
+      explanation: type == CardType.mcq ? text('explanation') : null,
+      confidence:
+          confidence is num &&
+              confidence.isFinite &&
+              confidence >= 0 &&
+              confidence <= 1
+          ? confidence.toDouble()
+          : null,
+      rawResponse: malformed ? jsonEncode(raw) : null,
+      requestedTypes: requestedTypes,
+    );
+  }
   factory MaterialDraft.fromJson(String id, Map<String, dynamic> json) {
     final type = CardType.fromWire(json['type'] as String);
     final options = json['options'];
