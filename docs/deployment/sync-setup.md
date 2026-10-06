@@ -36,7 +36,13 @@ Dữ liệu khách được nhập theo lựa chọn hoặc giữ riêng. Kho g�
 
 Đặt `SYNC_METRICS=true` ở backend để ghi `sync_request` gồm method, mẫu route, HTTP status, durationMs và operationCount. Không ghi UID, token, URL presigned hoặc nội dung học. Theo dõi tỷ lệ lỗi 401/403/409/413/5xx, thời gian đồng bộ, số lần retry và phản ánh outbox/xung đột ở client. Client giữ trạng thái/outbox trên máy; chưa có pipeline gửi telemetry từ thiết bị lên hệ thống giám sát.
 
-Retry tăng từ 5 giây tới tối đa 5 phút. Thay đổi gom trong 3 giây; đăng nhập, mở lại app và callback mạng Android kích hoạt đồng bộ. Chỉ một lượt chạy cho tài khoản hiện hành; đổi UID hủy request và bỏ qua phản hồi cũ. Tính đúng đắn không phụ thuộc Android cho chạy sau khi app bị đóng.
+Đồng bộ **thủ công mặc định**, kể cả khi nâng cấp. Đăng nhập chỉ chuẩn bị thư viện cục bộ; người dùng bấm **Đồng bộ để tải thư viện** để kiểm tra cloud và tải nội dung/tiến độ. Mở màn hình tài khoản, quay lại app, có mạng hoặc sửa dữ liệu không gửi request đồng bộ ở chế độ thủ công. Nút đồng bộ vẫn tải thay đổi từ cloud khi máy không có thay đổi cần gửi. Khi chuyển máy: đồng bộ trên A sau khi học, rồi trên B trước khi học; không chuyển hàng đợi phiên học đang dở.
+
+Tùy chọn **Tự động đồng bộ** được lưu trong `sync_state.automaticSync` của thư viện chuẩn, riêng từng tài khoản/thiết bị, không gửi sang máy khác. Khi bật, mở lại app/có mạng kích hoạt đồng bộ, thay đổi gom trong 3 giây; lỗi tạm thời retry từ 5 giây tới tối đa 5 phút. Lỗi phiên, xác minh email, tài khoản bị khóa/xóa, cấu hình và dữ liệu không hợp lệ dừng tự động thử lại. Chỉ một lượt chạy cho tài khoản hiện hành; đổi UID hủy request và bỏ qua phản hồi cũ. Không phụ thuộc Android cho chạy sau khi app bị đóng.
+
+Client dùng ID token được SDK quản lý; chỉ force-refresh và phát lại cùng payload một lần khi gặp `token_expired`, `token_invalid`, hoặc `reauth_required` của backend cũ. Backend dùng chung phân loại xác thực cho sync/backup: 401 cho token/phiên, 403 cho email chưa xác minh hoặc tài khoản bị khóa/xóa, 503 cho lỗi cấu hình/dịch vụ. `auth_configuration_error` không yêu cầu người dùng đăng nhập lại. Backend ghi `auth_verification_failed` gồm request ID và mã lỗi SDK; response có `X-Request-ID`, không log token, UID hoặc nội dung học. Đối chiếu log này để xác định nguyên nhân lỗi trên thiết bị thật.
+
+Triển khai backend mới trước client. `lastSynced` biểu thị thời điểm đồng bộ dữ liệu học; `mediaPending` giữ riêng trạng thái ảnh/PDF chưa hoàn tất qua lần mở lại app. Không thay schema dữ liệu học hay thuật toán lịch ôn. Chạy kiểm thử theo [hướng dẫn xác minh](../sync-validation.md) trước khi phát hành.
 
 ## Nghiệm thu trước phát hành
 

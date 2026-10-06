@@ -58,7 +58,7 @@ test('failed atomic group rolls back entirely and pagination ends on a group bou
 });
 test('API isolates accounts, requires verification, and validates operation limits and paths', async () => {
   const store = await seeded();
-  const app = createApp({sync:{store,verifyToken:async token => { if(token==='bad') throw Error(); return {uid:token,email_verified:token!=='unverified'}; }}});
+  const app = createApp({sync:{store,verifyToken:async token => { if(token==='bad') throw Object.assign(Error(), {code:'auth/invalid-id-token'}); return {uid:token,email_verified:token!=='unverified'}; }}});
   const server = app.listen(0,'127.0.0.1'); await new Promise(r=>server.once('listening',r));
   async function request(path,token='A',body) { const r=await fetch(`http://127.0.0.1:${server.address().port}/api/v1/sync${path}`,{method:body?'POST':'GET',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined});return {status:r.status,body:await r.json()}; }
   try {

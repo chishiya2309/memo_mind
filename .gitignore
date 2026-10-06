@@ -101,4 +101,5 @@ config/*.local.json
 # JVM crash dumps (crash/replay text logs are already covered by *.log).
 *.hprof
 *.dmp
+**/functions/functions.zip
 

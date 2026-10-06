@@ -462,8 +462,14 @@ void main() {
     await b.sync.syncNow();
     expect(b.sync.error, contains('bị hỏng'));
     expect(b.sync.mediaStatus, isNotNull);
+    expect(b.sync.lastSynced, isNotNull);
+    expect(await b.sync.hasPending, isTrue);
+    await b.sync.bind();
+    expect(b.sync.mediaPhase, SyncMediaPhase.pending);
     expect((await b.decks.getDecks()).length, 1);
     await b.flush('tablet');
+    expect(b.sync.mediaPhase, SyncMediaPhase.idle);
+    expect(await b.local.setting('mediaPending'), '0');
     expect(await downloaded.readAsBytes(), bytes);
     await a.context.database.studyTransaction(
       (txn) =>
@@ -717,8 +723,10 @@ void main() {
     await a.workspaces.select(empty);
     final chosen = await a.sync.prepareAccount();
     expect(chosen.id, canonical.id);
-    expect(a.sync.needsMigration, isTrue);
+    expect(a.sync.needsMigration, isFalse);
     await a.workspaces.select(chosen);
+    await a.sync.syncNow();
+    expect(a.sync.needsMigration, isTrue);
     expect(await a.decks.getDecks(), isEmpty);
     await a.sync.acceptMigration(source: source);
     expect(a.sync.error, isNull);

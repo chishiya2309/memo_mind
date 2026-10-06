@@ -9,6 +9,9 @@ class FakeSyncApi extends SyncApiClient {
   FakeSyncApi(AuthRepository auth)
     : super(auth: auth, baseUrl: 'https://configured.example');
   int revision = 0;
+  final requests = <String>[];
+  AccountFailure? failure;
+  Completer<void>? holdRequest;
   @override
   Future<Map<String, dynamic>> request(
     String method,
@@ -16,6 +19,9 @@ class FakeSyncApi extends SyncApiClient {
     Map<String, Object?>? body,
     required String uid,
   }) async {
+    requests.add('$method $suffix');
+    await holdRequest?.future;
+    if (failure != null) throw failure!;
     if (suffix == '/status' || suffix == '/initialize') {
       return {'initialized': true, 'revision': revision};
     }
@@ -46,6 +52,10 @@ class FakeAccountAuth implements AuthRepository {
   int registrations = 0, logins = 0;
   bool verificationFails = false;
   String? suppliedPassword;
+  final tokenRefreshes = <bool>[];
+  Future<void> Function(bool)? onToken;
+  AccountFailure? reauthenticationFailure;
+  int reauthentications = 0;
   void change(AccountIdentity? identity) {
     current = identity;
     updates.add(identity);
@@ -105,7 +115,12 @@ class FakeAccountAuth implements AuthRepository {
   @override
   Future<void> resetPassword(String email) async {}
   @override
-  Future<String> token({bool refresh = false}) async => 'fake-token';
+  Future<String> token({bool refresh = false}) async {
+    tokenRefreshes.add(refresh);
+    await onToken?.call(refresh);
+    return refresh ? 'refreshed-token' : 'fake-token';
+  }
+
   @override
   Future<void> signOut() async => change(null);
   @override
@@ -113,7 +128,11 @@ class FakeAccountAuth implements AuthRepository {
   @override
   Future<void> linkEmail(String email, String password) async {}
   @override
-  Future<void> reauthenticate({String? password}) async {}
+  Future<void> reauthenticate({String? password}) async {
+    reauthentications++;
+    suppliedPassword = password;
+    if (reauthenticationFailure != null) throw reauthenticationFailure!;
+  }
 }
 
 class FakeBackupApi extends BackupApiClient {

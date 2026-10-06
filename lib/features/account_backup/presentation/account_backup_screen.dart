@@ -25,9 +25,6 @@ class _AccountBackupScreenState extends State<AccountBackupScreen> {
   void initState() {
     super.initState();
     c.accountScreens++;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) c.sync.schedule(immediate: true);
-    });
   }
 
   @override
@@ -159,7 +156,10 @@ class _AccountBackupScreenState extends State<AccountBackupScreen> {
       if (choice == null) return;
       if (choice == 'sync') {
         await c.sync.syncNow();
-        if (await c.sync.hasPending || c.sync.error != null) {
+        if (c.sync.busy ||
+            await c.sync.hasPending ||
+            c.sync.error != null ||
+            c.sync.needsMigration) {
           if (mounted) {
             _notice(
               'Chưa đồng bộ xong. Hãy thử lại hoặc đăng xuất và giữ trên thiết bị.',
@@ -171,6 +171,20 @@ class _AccountBackupScreenState extends State<AccountBackupScreen> {
     }
     await c.signOut();
   });
+  Future<void> _reauthenticateAndSync() async {
+    final uid = c.account?.uid;
+    if (uid == null) return;
+    if (c.account!.providers.contains('password')) {
+      final credentials = await _credentials(newPassword: false);
+      if (credentials == null) return;
+      await c.auth.reauthenticate(password: credentials.$2);
+    } else {
+      await c.auth.reauthenticate();
+    }
+    if (c.account?.uid != uid) return;
+    await c.sync.syncNow();
+  }
+
   Future<void> _link(bool google) => _run(() async {
     final passwordProvider = c.account!.providers.contains('password');
     if (passwordProvider) {
@@ -298,7 +312,7 @@ class _AccountBackupScreenState extends State<AccountBackupScreen> {
           children: [
             if (account == null) ...[
               const Text(
-                'Học offline trên thiết bị hoặc đăng nhập để sao lưu kho riêng tư.',
+                'Học offline hoặc đăng nhập để đồng bộ tiến độ giữa các thiết bị.',
               ),
               const SizedBox(height: 16),
               OutlinedButton.icon(
@@ -388,7 +402,8 @@ class _AccountBackupScreenState extends State<AccountBackupScreen> {
                     : 'Xác minh email để đồng bộ',
               ),
               if (c.message != null) Text(c.message!),
-              if (!account.emailVerified) ...[
+              if (!account.emailVerified ||
+                  c.sync.failureCode == 'email_unverified') ...[
                 TextButton(
                   onPressed: _busy ? null : () => _run(c.auth.sendVerification),
                   child: const Text('Gửi lại email xác minh'),
@@ -401,12 +416,16 @@ class _AccountBackupScreenState extends State<AccountBackupScreen> {
                           if (c.account?.emailVerified == true) {
                             await _afterLogin();
                           }
-                          await c.refreshCloud();
                         }),
                   child: const Text('Tôi đã xác minh'),
                 ),
               ],
-              SyncAccountPanel(controller: c, run: _run),
+              SyncAccountPanel(
+                controller: c,
+                run: _run,
+                onReauthenticate: _reauthenticateAndSync,
+                busy: _busy,
+              ),
               if (!account.providers.contains('google.com'))
                 TextButton(
                   onPressed: _busy ? null : () => _link(true),
