@@ -47,6 +47,7 @@ class _FlashcardEditDialogState extends State<FlashcardEditDialog> {
       ),
   };
   late String? _correct = widget.card.correctOptionId;
+  late CardType _type = widget.card.type;
   Map<String, String> _errors = {};
   @override
   void dispose() {
@@ -63,37 +64,28 @@ class _FlashcardEditDialogState extends State<FlashcardEditDialog> {
 
   void _save() {
     final card = widget.card.copyWith(
+      type: _type,
+      clearRawResponse: true,
       front: _front.text.trim(),
       back: _back.text.trim(),
-      options: widget.card.type == CardType.mcq
+      options: _type == CardType.mcq
           ? [
               for (final entry in _options.entries)
                 McqOption(optionId: entry.key, text: entry.value.text.trim()),
             ]
-          : null,
+          : const [],
       correctOptionId: _correct,
-      explanation: widget.card.type == CardType.mcq
-          ? _explanation.text.trim()
-          : null,
+      explanation: _type == CardType.mcq ? _explanation.text.trim() : null,
       status: DraftCardStatus.pending,
       isEdited: true,
     );
-    final errors = MaterialValidator.errors(card);
+    final errors = MaterialValidator.errors(card, requireSource: false);
     if (errors.isNotEmpty) {
       setState(() => _errors = errors);
       return;
     }
-    try {
-      MaterialValidator.validate(
-        card,
-        sourceBlock: widget.sourceBlock,
-        documentId: widget.sourceBlock?.documentId ?? '',
-      );
-      widget.onSaved(card);
-      Navigator.pop(context);
-    } on MaterialGenerationFailure catch (e) {
-      setState(() => _errors = {'source': e.message});
-    }
+    widget.onSaved(card);
+    Navigator.pop(context);
   }
 
   Widget _field(
@@ -124,17 +116,33 @@ class _FlashcardEditDialogState extends State<FlashcardEditDialog> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            DropdownButtonFormField<CardType>(
+              initialValue: _type,
+              decoration: const InputDecoration(labelText: 'Loại học liệu'),
+              items: [
+                for (final type in CardType.values)
+                  DropdownMenuItem(value: type, child: Text(type.displayName)),
+              ],
+              onChanged: (value) {
+                if (value != null) setState(() => _type = value);
+              },
+            ),
+            if (widget.card.rawResponse != null)
+              ExpansionTile(
+                title: const Text('Dữ liệu AI gốc'),
+                children: [SelectableText(widget.card.rawResponse!)],
+              ),
             _field(
               'front',
-              widget.card.type == CardType.cloze ? 'Câu chứa [...]' : 'Câu hỏi',
+              _type == CardType.cloze ? 'Câu chứa [...]' : 'Câu hỏi',
               _front,
               lines: 3,
             ),
-            if (widget.card.type == CardType.mcq) ...[
+            if (_type == CardType.mcq) ...[
               for (final entry in _options.entries)
                 _field(entry.key, 'Lựa chọn ${entry.key}', entry.value),
               DropdownButtonFormField<String>(
-                initialValue: _correct,
+                initialValue: _options.containsKey(_correct) ? _correct : null,
                 decoration: InputDecoration(
                   labelText: 'Đáp án đúng',
                   errorText: _errors['correctOptionId'],

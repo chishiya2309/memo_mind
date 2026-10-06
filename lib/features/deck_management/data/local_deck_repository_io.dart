@@ -13,7 +13,6 @@ import '../../document_import/domain/document_import_models.dart';
 import '../../home/domain/home_dashboard_data.dart';
 import '../../image_normalization/domain/image_normalization_models.dart';
 import '../../material_generation/domain/material_generation_models.dart';
-import '../../material_generation/domain/material_validator.dart';
 import '../../ocr_editor/domain/ocr_models.dart';
 import '../domain/deck_models.dart';
 import '../domain/deck_repository.dart';
@@ -413,55 +412,18 @@ class LocalDeckRepository implements DeckRepository {
         if (card.deckId != deckId) {
           throw const FormatException('Deck không khớp.');
         }
+        card.content.validate();
+        // Only persist source links that still belong to this document. Source
+        // quality is advisory; disappearing or edited OCR never discards a card.
         final rows = await txn.rawQuery(
-          '''
-          SELECT b.*, p.document_id AS actual_document_id, p.page_number AS actual_page_number
-          FROM source_blocks b JOIN source_pages p ON p.page_id = b.page_id
-          WHERE b.block_id = ?
-        ''',
-          [card.sourceBlockId],
+          "SELECT b.block_id, b.page_id, p.page_number FROM source_blocks b JOIN source_pages p ON p.page_id=b.page_id WHERE b.block_id=? AND p.document_id=? AND b.status!='deleted'",
+          [card.sourceBlockId, card.sourceDocumentId],
         );
-        if (rows.isEmpty) {
-          throw const MaterialGenerationFailure(
-            MaterialGenerationFailureCode.sourceBlockMismatch,
-            'Đoạn nguồn không còn tồn tại.',
-          );
-        }
-        final row = rows.single;
-        if (row['page_id'] != card.sourcePageId ||
-            row['actual_document_id'] != card.sourceDocumentId ||
-            row['actual_page_number'] != card.sourcePageNumber) {
-          throw const MaterialGenerationFailure(
-            MaterialGenerationFailureCode.sourceBlockMismatch,
-            'Trang nguồn đã thay đổi.',
-          );
-        }
-        final block = SourceBlock(
-          blockId: row['block_id'] as String,
-          documentId: row['document_id'] as String,
-          pageId: row['page_id'] as String,
-          pageNumber: row['page_number'] as int,
-          orderIndex: row['order_index'] as int,
-          rawText: row['raw_text'] as String,
-          normalizedText: row['normalized_text'] as String,
-          status: switch (row['status']) {
-            'verified' => BlockStatus.verified,
-            'user_added' => BlockStatus.userAdded,
-            'deleted' => BlockStatus.deleted,
-            _ => BlockStatus.draft,
-          },
-          createdAt: DateTime.fromMillisecondsSinceEpoch(
-            row['created_at'] as int,
-          ),
-          updatedAt: DateTime.fromMillisecondsSinceEpoch(
-            row['updated_at'] as int,
-          ),
-        );
-        MaterialValidator.validate(
-          card.toDraft(),
-          sourceBlock: block,
-          documentId: card.sourceDocumentId ?? '',
-        );
+        final source = rows.firstOrNull;
+        final pageMatches =
+            source != null &&
+            source['page_id'] == card.sourcePageId &&
+            source['page_number'] == card.sourcePageNumber;
         await txn.insert('cards', {
           'tags': jsonEncode(CardContent.normalizeTags(card.tags)),
           'card_id': card.id,
@@ -477,9 +439,9 @@ class LocalDeckRepository implements DeckRepository {
                 })
               : null,
           'source_document_id': card.sourceDocumentId,
-          'source_page_id': card.sourcePageId,
-          'source_page_number': card.sourcePageNumber,
-          'source_block_id': card.sourceBlockId,
+          'source_page_id': pageMatches ? card.sourcePageId : null,
+          'source_page_number': pageMatches ? card.sourcePageNumber : null,
+          'source_block_id': source?['block_id'],
           'source_quote': card.sourceQuote,
           'confidence': card.confidence,
           'status': card.status.name,

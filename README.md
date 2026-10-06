@@ -81,6 +81,7 @@ Generation requests identify the source document, requested card types, quantity
 ```json
 {
   "documentId": "document-id",
+  "reviewPolicy": "user_review",
   "types": ["BASIC", "CLOZE", "MCQ"],
   "quantityMode": "auto",
   "sourceBlocks": [
@@ -94,7 +95,15 @@ Generation requests identify the source document, requested card types, quantity
 }
 ```
 
-Use `quantityMode: "manual"` with `desiredCount` from 1–30 to set a total target. Auto mode returns at most 20 cards. The response contains only server validated cards, source links, discard counts, per type counts, and coded warnings. MCQ cards have options A–D, a correct option ID, and an explanation. Requests with no valid result return HTTP 422. The server validates the source blocks supplied with the request; Flutter rechecks them against SQLite before saving.
+Use `quantityMode: "manual"` with `desiredCount` from the number of selected types through 30 to set a total target. Auto mode requests up to 20 cards. The budget is distributed across source batches using largest remainders, without the previous four-card batch cap. These are generation targets: if the provider returns extra cards, review mode keeps them all.
+
+With `reviewPolicy: "user_review"`, the response includes the same policy, `totalGenerated`, `warnings`, and `cards: [{id, card, issues}]`. Every provider item is retained, including malformed values. Each issue has `code`, `message`, `field`, and `severity` (`warning` or `error`). Duplicate questions and source mismatches are advisory; they do not prevent saving. Malformed content stays visible for correction. MCQ cards still need four choices A–D, a correct answer, and an explanation to be usable. An empty provider array is HTTP 200 in review mode; an unreadable response still fails after one format-repair attempt.
+
+Flutter recomputes content/source/duplicate issues after editing or regeneration. Duplicate checks compare normalized question text within this generation session, not semantic similarity or the destination deck. Saving checks usable card structure and source ownership without requiring a matching quote. Unknown source links are left empty; quotes are retained. No database migration is needed.
+
+Deploy this backend before distributing the updated app. The app refuses responses without the review-policy marker and explains that the service needs updating. Requests without `reviewPolicy`, plus the old flashcard endpoint, retain the previous response shape and filtering behavior for older clients.
+
+OCR confirmation now opens generation configuration directly, with a warning only for unreviewed source blocks. Successful approval returns the destination deck and saved count; navigation becomes Home → Library → Deck, so Back cannot re-enter the finished OCR flow. Cancelling configuration preserves confirmed OCR; retrying generation retains configuration.
 
 
 ## Validation

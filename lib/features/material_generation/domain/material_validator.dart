@@ -15,6 +15,9 @@ class MaterialValidator {
     bool requireSource = true,
   }) {
     final errors = <String, String>{};
+    if (card.rawResponse != null) {
+      errors['format'] = 'Vui lòng kiểm tra loại và nội dung thẻ trong Chỉnh sửa, rồi lưu thay đổi.';
+    }
     void check(String key, String value, int max) {
       if (value.trim().isEmpty || value.length > max) {
         errors[key] = 'Bắt buộc nhập, tối đa $max ký tự.';
@@ -82,5 +85,85 @@ class MaterialValidator {
         'Nguồn đã thay đổi hoặc không khớp. Vui lòng kiểm tra lại học liệu.',
       );
     }
+  }
+
+  static List<MaterialIssue> issues(
+    MaterialDraft card, {
+    required SourceBlock? sourceBlock,
+    required String documentId,
+    List<MaterialDraft> cards = const [],
+  }) {
+    final result = <MaterialIssue>[
+      for (final entry in errors(card, requireSource: false).entries)
+        MaterialIssue(
+          'invalid_${entry.key}',
+          entry.value,
+          field: entry.key,
+          isError: true,
+        ),
+    ];
+    if (card.requestedTypes.isNotEmpty &&
+        !card.requestedTypes.contains(card.type)) {
+      result.add(
+        const MaterialIssue('unrequested_type', 'Loại thẻ khác với yêu cầu.'),
+      );
+    }
+    if (sourceBlock == null ||
+        sourceBlock.isDeleted ||
+        sourceBlock.documentId != documentId) {
+      result.add(
+        const MaterialIssue(
+          'source_block_mismatch',
+          'Không tìm thấy đoạn nguồn.',
+          field: 'sourceBlockId',
+        ),
+      );
+    } else {
+      if (sourceBlock.pageNumber != card.sourcePage) {
+        result.add(
+          const MaterialIssue(
+            'source_page_mismatch',
+            'Trang nguồn không khớp.',
+            field: 'sourcePage',
+          ),
+        );
+      }
+      if (!isQuoteSupported(card.sourceQuote, sourceBlock.normalizedText)) {
+        result.add(
+          const MaterialIssue(
+            'unsupported_quote',
+            'Trích dẫn chưa khớp đoạn nguồn.',
+            field: 'sourceQuote',
+          ),
+        );
+      }
+      if (!(sourceBlock.isVerified || sourceBlock.isUserAdded)) {
+        result.add(
+          const MaterialIssue(
+            'source_changed',
+            'Đoạn nguồn chưa được xác nhận hoặc đã thay đổi.',
+          ),
+        );
+      }
+    }
+    final key = normalize(card.front).toLowerCase();
+    final duplicate = cards
+        .where(
+          (c) =>
+              c.id != card.id &&
+              key.isNotEmpty &&
+              normalize(c.front).toLowerCase() == key,
+        )
+        .firstOrNull;
+    if (duplicate != null) {
+      result.add(
+        MaterialIssue(
+          'duplicate',
+          'Câu hỏi giống thẻ ${cards.indexOf(duplicate) + 1}.',
+          field: 'front',
+        ),
+      );
+    }
+    return result;
   }
 }

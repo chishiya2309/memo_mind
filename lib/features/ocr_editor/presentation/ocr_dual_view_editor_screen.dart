@@ -39,6 +39,7 @@ class _OcrDualViewEditorScreenState extends State<OcrDualViewEditorScreen> {
   late final GeminiEnhancer _gemini;
 
   bool _loading = true;
+  bool _continuing = false;
   String? _errorMessage;
   OcrDocumentReview? _review;
 
@@ -390,6 +391,24 @@ class _OcrDualViewEditorScreenState extends State<OcrDualViewEditorScreen> {
   }
 
   Future<void> _confirmOcr() async {
+    if (_continuing) return;
+    setState(() => _continuing = true);
+    try {
+      await _continueToGeneration();
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Không thể lưu xác nhận OCR. Vui lòng thử lại.'),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _continuing = false);
+    }
+  }
+
+  Future<void> _continueToGeneration() async {
     final review = _review;
     if (review == null) return;
 
@@ -436,64 +455,15 @@ class _OcrDualViewEditorScreenState extends State<OcrDualViewEditorScreen> {
 
     if (!mounted) return;
 
-    // Luồng 15: Xác nhận văn bản đưa vào AI
-    final confirm = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Xác nhận hoàn tất OCR?'),
-        content: const Text(
-          'Văn bản đã hiệu chỉnh sẽ được lưu và sẵn sàng gửi sang AI để sinh flashcard và câu hỏi trắc nghiệm.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Hủy'),
-          ),
-          FilledButton(
-            key: const Key('final-ocr-confirm-btn'),
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Đồng ý xác nhận'),
-          ),
-        ],
-      ),
-    );
-
-    if (confirm != true) return;
-
     await _repository.confirmOcrReview(widget.document.documentId);
-
+    final updated = await _repository.getOcrReview(widget.document.documentId);
     if (!mounted) return;
-
-    final shouldStartAi = await showDialog<bool>(
+    setState(() => _review = updated);
+    await MaterialGenerationFlow.start(
       context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('OCR đã được xác nhận!'),
-        content: const Text(
-          'Tài liệu đã ở trạng thái "Sẵn sàng tạo học liệu". Bạn có muốn tạo flashcard và câu hỏi ngay không?',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, false),
-            child: const Text('Để sau'),
-          ),
-          FilledButton.icon(
-            icon: const Icon(Icons.auto_awesome),
-            label: const Text('Tạo học liệu AI'),
-            onPressed: () => Navigator.pop(dialogContext, true),
-          ),
-        ],
-      ),
+      document: widget.document,
+      ocrRepository: _repository,
     );
-
-    if (shouldStartAi == true && mounted) {
-      await MaterialGenerationFlow.start(
-        context: context,
-        document: widget.document,
-        ocrRepository: _repository,
-      );
-    } else if (mounted) {
-      Navigator.of(context).popUntil((route) => route.isFirst);
-    }
   }
 
   Future<void> _reloadSilently() async {
@@ -558,16 +528,12 @@ class _OcrDualViewEditorScreenState extends State<OcrDualViewEditorScreen> {
             IconButton(
               tooltip: 'Tạo học liệu',
               icon: const Icon(Icons.auto_awesome),
-              onPressed: () => MaterialGenerationFlow.start(
-                context: context,
-                document: widget.document,
-                ocrRepository: _repository,
-              ),
+              onPressed: _continuing ? null : _confirmOcr,
             ),
           IconButton(
             tooltip: 'Lưu bản nháp',
             icon: const Icon(Icons.save_outlined),
-            onPressed: _saveDraftAndExit,
+            onPressed: _continuing ? null : _saveDraftAndExit,
           ),
           IconButton(
             tooltip: 'Thêm đoạn văn bản',
@@ -615,7 +581,11 @@ class _OcrDualViewEditorScreenState extends State<OcrDualViewEditorScreen> {
               top: BorderSide(color: palette.outline.withValues(alpha: 0.2)),
             ),
           ),
-          child: Row(
+          child: Wrap(
+            alignment: WrapAlignment.end,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            spacing: 8,
+            runSpacing: 8,
             children: [
               // Page navigation
               if (pages.length > 1) ...[
@@ -635,20 +605,20 @@ class _OcrDualViewEditorScreenState extends State<OcrDualViewEditorScreen> {
                       ? () => setState(() => _currentPageIndex++)
                       : null,
                 ),
-                const Spacer(),
-              ] else
-                const Spacer(),
+              ],
 
               OutlinedButton(
-                onPressed: _saveDraftAndExit,
-                child: const Text('Lưu nháp'),
+                onPressed: _continuing ? null : _saveDraftAndExit,
+                child: const Text('Lưu và để sau'),
               ),
               const SizedBox(width: 10),
               FilledButton.icon(
                 key: const Key('confirm-ocr-btn'),
                 icon: const Icon(Icons.check_circle_outline_rounded),
-                label: const Text('Xác nhận OCR'),
-                onPressed: _confirmOcr,
+                label: Text(
+                  _continuing ? 'Đang xử lý…' : 'Tiếp tục tạo học liệu',
+                ),
+                onPressed: _continuing ? null : _confirmOcr,
               ),
             ],
           ),

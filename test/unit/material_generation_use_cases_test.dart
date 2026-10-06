@@ -449,7 +449,7 @@ void main() {
         back: 'Đáp án 1',
         sourcePage: 1,
         sourceBlockId: 'blk-save',
-        sourceQuote: 'Nội dung chuẩn',
+        sourceQuote: 'Trích dẫn chưa khớp nội dung nguồn',
         status: DraftCardStatus.accepted,
       );
 
@@ -480,6 +480,32 @@ void main() {
 
       final updatedDeck = await deckRepo.getDeckById(deck.id);
       expect(updatedDeck?.cardCount, 1);
+      // Source mismatch and duplicates are advisory all the way through SQLite.
+      final duplicate = acceptedCard.copyWith(id: 'duplicate');
+      final missing = MaterialDraft.fromReviewJson('missing', {
+        'type': 'BASIC',
+        'front': 'Câu hỏi nguồn thiếu',
+        'back': 'Đáp án',
+        'sourceBlockId': 'missing-block',
+        'sourcePage': 9,
+        'sourceQuote': 'Trích dẫn AI',
+      }).copyWith(status: DraftCardStatus.accepted);
+      expect(
+        await saveUseCase.execute(
+          deckId: deck.id,
+          documentId: 'doc-save',
+          drafts: [duplicate, missing],
+        ),
+        2,
+      );
+      final all = await deckRepo.getCardsForDeck(deck.id);
+      expect(all.length, 3);
+      expect(all.where((c) => c.id == 'missing').single.sourceBlockId, isNull);
+      expect(
+        all.where((c) => c.id == 'missing').single.sourceQuote,
+        'Trích dẫn AI',
+      );
+      expect(all.first.sourceQuote, 'Trích dẫn chưa khớp nội dung nguồn');
     });
 
     test('returns zero without writes when no cards are accepted', () async {

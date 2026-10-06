@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../../../shared/theme/memo_theme.dart';
 import '../../document_import/domain/document_import_models.dart';
 import '../../ocr_editor/domain/ocr_models.dart';
+import '../domain/material_validator.dart';
 
 class SourceInspectionModal extends StatelessWidget {
   const SourceInspectionModal({
@@ -78,6 +79,14 @@ class SourceInspectionModal extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final p = MemoPalette.of(context);
+    final sourceWarning = sourceBlock == null || sourceBlock!.isDeleted
+        ? 'Không tìm thấy đoạn nguồn. Trích dẫn này chưa được đối chiếu.'
+        : !MaterialValidator.isQuoteSupported(
+            sourceQuote,
+            sourceBlock!.normalizedText,
+          )
+        ? 'Trích dẫn chưa khớp đoạn nguồn. Hãy đối chiếu nội dung trước khi học.'
+        : null;
     final pageNumber =
         sourcePage?.pageNumber ?? sourcePageNumber ?? sourceBlock?.pageNumber;
     return SizedBox(
@@ -122,6 +131,11 @@ class SourceInspectionModal extends StatelessWidget {
                 children: [
                   if (warning != null)
                     Text(warning!, key: const Key('source-warning')),
+                  if (sourceWarning != null)
+                    Text(
+                      sourceWarning,
+                      key: const Key('source-content-warning'),
+                    ),
                   _page(p),
                   const SizedBox(height: 16),
                   Text(

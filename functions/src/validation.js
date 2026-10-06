@@ -11,6 +11,7 @@ function validateRequest(body) {
       !body.types.length || new Set(body.types).size !== body.types.length ||
       body.types.some(t => !TYPES.includes(t))) bad();
   const quantityMode = body.quantityMode ?? 'auto';
+  if (body.reviewPolicy !== undefined && body.reviewPolicy !== 'user_review') bad();
   if (!['auto', 'manual'].includes(quantityMode)) bad();
   if (quantityMode === 'manual' && (!Number.isInteger(body.desiredCount) ||
       body.desiredCount < body.types.length || body.desiredCount > 30)) bad();
@@ -77,4 +78,51 @@ function parseEnvelope(text) {
     return body && !Array.isArray(body) && Object.keys(body).length === 1 && Array.isArray(body.cards) ? body.cards : null;
   } catch { return null; }
 }
-module.exports = { ApiError, validateRequest, filterCards, parseEnvelope, normalize };
+// Review mode never drops an item: even malformed values have a review entry.
+function reviewCards(rawCards, request) {
+  const blocks = new Map(request.sourceBlocks.map(b => [b.blockId, b]));
+  const seen = new Map();
+  const cards = rawCards.map((card, index) => {
+    const issues = [];
+    const add = (code, message, field, severity = 'warning') => issues.push({ code, message, field, severity });
+    if (!validateCardSchema(card)) add('invalid_schema', 'Cần sửa định dạng thẻ trước khi lưu.', null, 'error');
+    if (card && typeof card === 'object') {
+      if (TYPES.includes(card.type) && !request.types.includes(card.type)) add('unrequested_type', 'Loại thẻ khác với yêu cầu.', 'type');
+      for (const field of ['front', 'back']) {
+        if (!boundedText(card[field], 2000)) add('invalid_fields', 'Bắt buộc nhập, tối đa 2000 ký tự.', field, 'error');
+      }
+      if (card.type === 'CLOZE' && !card.front?.includes?.('[...]')) add('invalid_cloze', 'Câu điền khuyết cần chứa [...].', 'front', 'error');
+      if (card.type === 'MCQ') {
+        const options = Array.isArray(card.options) ? card.options : [];
+        if (options.length !== 4 || new Set(options.map(o => o?.optionId)).size !== 4 ||
+          options.some(o => !['A', 'B', 'C', 'D'].includes(o?.optionId) || !boundedText(o?.text, 500)) ||
+          new Set(options.map(o => typeof o?.text === 'string' ? normalize(o.text).toLowerCase() : '')).size !== 4 ||
+          !options.some(o => o?.optionId === card.correctOptionId) || !boundedText(card.explanation, 2000)) {
+          add('invalid_mcq', 'Cần sửa lựa chọn, đáp án hoặc giải thích trắc nghiệm.', 'options', 'error');
+        }
+      }
+      const block = blocks.get(card.sourceBlockId);
+      if (!block) add('source_block_mismatch', 'Không tìm thấy đoạn nguồn.', 'sourceBlockId');
+      else {
+        if (block.pageNumber !== card.sourcePage) add('source_page_mismatch', 'Trang nguồn không khớp.', 'sourcePage');
+        if (typeof card.sourceQuote !== 'string' || !normalize(card.sourceQuote) ||
+          !normalize(block.normalizedText).includes(normalize(card.sourceQuote))) {
+          add('unsupported_quote', 'Trích dẫn chưa khớp đoạn nguồn.', 'sourceQuote');
+        }
+      }
+      if (typeof card.front === 'string' && normalize(card.front)) {
+        const key = normalize(card.front).toLowerCase();
+        if (seen.has(key)) add('duplicate', `Câu hỏi giống thẻ ${seen.get(key) + 1}.`, 'front');
+        else seen.set(key, index);
+      }
+    }
+    return { id: `result-${index + 1}`, card, issues };
+  });
+  return { reviewPolicy: 'user_review', cards, totalGenerated: cards.length,
+    warnings: [
+      ...(cards.length > request.limit ? [`AI trả thêm ${cards.length - request.limit} thẻ so với mức yêu cầu; tất cả được giữ để duyệt.`] : []),
+      ...(request.quantityMode === 'manual' && cards.length < request.limit ? [`Kết quả ít hơn số lượng mong muốn ${request.limit - cards.length} thẻ.`] : []),
+      ...request.types.filter(type => !rawCards.some(c => c?.type === type)).map(type => `Chưa có thẻ loại ${type}.`),
+    ] };
+}
+module.exports = { ApiError, validateRequest, filterCards, reviewCards, parseEnvelope, normalize };

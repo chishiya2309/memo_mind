@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 
 import '../../deck_management/data/local_deck_repository.dart';
 import '../../deck_management/domain/deck_repository.dart';
+import '../../deck_management/presentation/deck_detail_screen.dart';
+import '../../deck_management/presentation/library_decks_screen.dart';
 import '../../document_import/domain/document_import_models.dart';
 import '../../ocr_editor/data/local_ocr_repository.dart';
 import '../../ocr_editor/domain/ocr_repository.dart';
@@ -65,51 +67,79 @@ class MaterialGenerationFlow {
         );
       }
       final navigator = Navigator.of(context, rootNavigator: true);
-      final loading = DialogRoute<void>(
-        context: context,
-        barrierDismissible: false,
-        builder: (_) => const PopScope(
-          canPop: false,
-          child: AlertDialog(
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                CircularProgressIndicator(),
-                SizedBox(height: 16),
-                Text('Đang tạo và kiểm tra học liệu…'),
-              ],
+      late MaterialGenerationResult result;
+      while (true) {
+        final loading = DialogRoute<void>(
+          context: context,
+          barrierDismissible: false,
+          builder: (_) => const PopScope(
+            canPop: false,
+            child: AlertDialog(
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  CircularProgressIndicator(),
+                  SizedBox(height: 16),
+                  Text('Đang tạo học liệu…'),
+                ],
+              ),
             ),
           ),
-        ),
-      );
-      navigator.push(loading);
-      late final MaterialGenerationResult result;
-      try {
-        result =
-            await GenerateMaterialsUseCase(
-              ocrRepository: ocr,
-              generationRepository: generation,
-            ).execute(
-              documentId: document.documentId,
-              types: selection.config.types,
-              quantityMode: selection.config.quantityMode,
-              desiredCount: selection.config.desiredCount,
-              selectedBlockIds: selection.config.selectedBlockIds,
-            );
-      } finally {
-        if (loading.isActive && navigator.mounted) {
-          navigator.removeRoute(loading);
-        }
-      }
-      if (!context.mounted) return;
-      if (result.cards.isEmpty) {
-        throw const MaterialGenerationFailure(
-          MaterialGenerationFailureCode.noValidCards,
-          'Không có học liệu đạt kiểm tra.',
         );
+        navigator.push(loading);
+        Object? failure;
+        try {
+          result =
+              await GenerateMaterialsUseCase(
+                ocrRepository: ocr,
+                generationRepository: generation,
+              ).execute(
+                documentId: document.documentId,
+                types: selection.config.types,
+                quantityMode: selection.config.quantityMode,
+                desiredCount: selection.config.desiredCount,
+                selectedBlockIds: selection.config.selectedBlockIds,
+              );
+          if (result.cards.isEmpty) {
+            throw const MaterialGenerationFailure(
+              MaterialGenerationFailureCode.noValidCards,
+              'AI chưa tạo được học liệu từ nguồn đã chọn. Bạn có thể chọn thêm nguồn hoặc thử lại.',
+            );
+          }
+        } catch (error) {
+          failure = error;
+        } finally {
+          if (loading.isActive && navigator.mounted) {
+            navigator.removeRoute(loading);
+          }
+        }
+        if (!context.mounted) return;
+        if (failure == null) break;
+        final retry = await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('Chưa thể tạo học liệu'),
+            content: Text(
+              failure is MaterialGenerationFailure
+                  ? failure.message
+                  : 'Không thể tạo học liệu. Vui lòng thử lại.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('Đóng'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text('Thử lại'),
+              ),
+            ],
+          ),
+        );
+        if (retry != true || !context.mounted) return;
       }
-      await Navigator.of(context).push(
-        MaterialPageRoute<void>(
+      final saved = await Navigator.of(context).push<MaterialSaveResult>(
+        MaterialPageRoute<MaterialSaveResult>(
           builder: (_) => FlashcardReviewApprovalScreen(
             documentId: document.documentId,
             documentTitle: document.title,
@@ -126,6 +156,9 @@ class MaterialGenerationFlow {
           ),
         ),
       );
+      if (saved != null && navigator.mounted) {
+        openSavedDeck(navigator: navigator, decks: decks, result: saved);
+      }
     } catch (error) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -139,5 +172,39 @@ class MaterialGenerationFlow {
         );
       }
     }
+  }
+
+  static void openSavedDeck({
+    required NavigatorState navigator,
+    required DeckRepository decks,
+    required MaterialSaveResult result,
+  }) {
+    Future<void> openDeck(String id, {int? savedCount}) => navigator.push<void>(
+      MaterialPageRoute<void>(
+        settings: RouteSettings(name: 'deck/$id'),
+        builder: (_) => DeckDetailScreen(
+          deckId: id,
+          repository: decks,
+          savedCount: savedCount,
+        ),
+      ),
+    );
+    navigator.popUntil((route) => route.isFirst);
+    navigator.push<void>(
+      MaterialPageRoute<void>(
+        settings: const RouteSettings(name: 'library'),
+        builder: (_) => Scaffold(
+          appBar: AppBar(title: const Text('Thư viện')),
+          body: LibraryDecksScreen(
+            repository: decks,
+            onOpenDeck: (id) {
+              openDeck(id);
+            },
+            onOpenDeckAsync: openDeck,
+          ),
+        ),
+      ),
+    );
+    openDeck(result.deckId, savedCount: result.savedCount);
   }
 }
