@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
@@ -15,6 +17,31 @@ check(teamDebugKeystore.isFile) {
     "Missing shared development keystore: ${teamDebugKeystore.path}. " +
         "Restore android/keystore/team-debug.keystore from the repository; " +
         "do not generate a local replacement because Google Sign-In requires the registered key."
+}
+
+val releaseSigningFile = rootProject.file("key.properties")
+val releaseSigningProperties = Properties().apply {
+    if (releaseSigningFile.isFile) {
+        releaseSigningFile.inputStream().use { load(it) }
+    }
+}
+val releaseKeystorePath = releaseSigningProperties.getProperty("storeFile")
+val releaseKeystore = releaseKeystorePath?.takeIf { it.isNotBlank() }?.let { rootProject.file(it) }
+
+// Keep debug builds usable without private release credentials, but never fall
+// back to the shared development key for a release build.
+if (gradle.startParameter.taskNames.any { it.contains("release", ignoreCase = true) }) {
+    check(releaseSigningFile.isFile) {
+        "Release signing requires android/key.properties."
+    }
+    for (name in listOf("storeFile", "storePassword", "keyAlias", "keyPassword")) {
+        check(!releaseSigningProperties.getProperty(name).isNullOrBlank()) {
+            "Release signing property '$name' is missing from android/key.properties."
+        }
+    }
+    check(releaseKeystore?.isFile == true) {
+        "Release keystore is missing: ${releaseKeystore?.path ?: releaseKeystorePath}."
+    }
 }
 
 android {
@@ -49,13 +76,17 @@ android {
             keyAlias = "androiddebugkey"
             keyPassword = "android"
         }
+        create("release") {
+            storeFile = releaseKeystore
+            storePassword = releaseSigningProperties.getProperty("storePassword")
+            keyAlias = releaseSigningProperties.getProperty("keyAlias")
+            keyPassword = releaseSigningProperties.getProperty("keyPassword")
+        }
     }
 
     buildTypes {
         release {
-            // Direct-install demo APKs use the same shared key as debug/profile.
-            // Configure a separate production signing key before publishing to Google Play.
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.getByName("release")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
