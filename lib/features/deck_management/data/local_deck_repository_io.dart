@@ -14,6 +14,9 @@ import '../../home/domain/home_dashboard_data.dart';
 import '../../image_normalization/domain/image_normalization_models.dart';
 import '../../material_generation/domain/material_generation_models.dart';
 import '../../ocr_editor/domain/ocr_models.dart';
+import '../../ocr_editor/data/local_ocr_repository.dart';
+import '../../document_import/data/local_document_import_repository_io.dart';
+import '../../material_generation/domain/source_reference_resolver.dart';
 import '../domain/deck_models.dart';
 import '../domain/deck_repository.dart';
 
@@ -302,29 +305,137 @@ class LocalDeckRepository implements DeckRepository {
       documentTitle = docRows.first['title'] as String? ?? '';
     }
 
-    SourceBlock? sourceBlock;
-    final blockRows = await db.query(
-      'source_blocks',
-      where: 'block_id = ?',
-      whereArgs: [card.sourceBlockId],
-      limit: 1,
+    final storedRows = await db.query(
+      'cards',
+      where: 'card_id=?',
+      whereArgs: [card.id],
     );
-    if (blockRows.isNotEmpty) {
-      sourceBlock = _mapSourceBlockRow(blockRows.first);
-    }
-
-    SourcePage? sourcePage;
-    File? imageFile;
-
-    String supportPath = '';
-    try {
-      final support = await _supportDirectory();
-      supportPath = support.path;
-    } catch (_) {
+    final stored = storedRows.firstOrNull;
+    if (stored == null ||
+        stored['front'] != card.front ||
+        stored['back'] != card.back ||
+        stored['source_quote'] != card.sourceQuote ||
+        stored['source_document_id'] != card.sourceDocumentId) {
       return CardSourceTrace(
         documentTitle: documentTitle,
         sourceQuote: card.sourceQuote,
         sourcePageNumber: card.sourcePageNumber,
+        warning: 'Thẻ đã thay đổi. Hãy mở lại để đối chiếu nguồn.',
+      );
+    }
+    var pageId = stored['source_page_id'] as String?;
+    var pageNumber = stored['source_page_number'] as int?;
+    final currentBlockId = stored['source_block_id'] as String?;
+    SourceBlock? sourceBlock;
+    var referenceRepaired =
+        pageId != card.sourcePageId ||
+        pageNumber != card.sourcePageNumber ||
+        currentBlockId != card.sourceBlockId;
+    final blockRows = await db.rawQuery(
+      'SELECT b.* FROM source_blocks b JOIN source_pages p ON p.page_id=b.page_id AND p.document_id=b.document_id AND p.page_number=b.page_number WHERE b.document_id=?',
+      [card.sourceDocumentId],
+    );
+    final blocks = blockRows.map(_mapSourceBlockRow).toList();
+    sourceBlock = SourceReferenceResolver.resolve(
+      documentId: card.sourceDocumentId ?? '',
+      quote: card.sourceQuote,
+      blockId: currentBlockId,
+      pageNumber: pageNumber,
+      blocks: blocks,
+    );
+    final resolvedPageId = sourceBlock?.pageId ?? pageId;
+    final resolvedPageNumber = sourceBlock?.pageNumber ?? pageNumber;
+    if (sourceBlock != null &&
+        (sourceBlock.blockId != currentBlockId ||
+            resolvedPageId != pageId ||
+            resolvedPageNumber != pageNumber)) {
+      final expectedBlockId = sourceBlock.blockId;
+      final whereParts = <String>[];
+      final whereValues = <Object>[];
+      for (final key in [
+        'card_id',
+        'updated_at',
+        'source_quote',
+        'source_document_id',
+        'source_page_id',
+        'source_page_number',
+        'source_block_id',
+        'front',
+        'back',
+        'type',
+        'mcq_payload',
+        'status',
+      ]) {
+        final value = stored[key];
+        whereParts.add(value == null ? '$key IS NULL' : '$key IS ?');
+        if (value != null) whereValues.add(value);
+      }
+      final count = await _database.studyTransaction((txn) async {
+        final latest = await txn.rawQuery(
+          'SELECT b.* FROM source_blocks b JOIN source_pages p ON p.page_id=b.page_id AND p.document_id=b.document_id AND p.page_number=b.page_number WHERE b.document_id=?',
+          [card.sourceDocumentId],
+        );
+        final resolved = SourceReferenceResolver.resolve(
+          documentId: card.sourceDocumentId!,
+          quote: card.sourceQuote,
+          blockId: currentBlockId,
+          pageNumber: pageNumber,
+          blocks: latest.map(_mapSourceBlockRow),
+        );
+        if (resolved?.blockId != expectedBlockId ||
+            resolved?.pageId != resolvedPageId ||
+            resolved?.pageNumber != resolvedPageNumber) {
+          return 0;
+        }
+        return txn.update(
+          'cards',
+          {
+            'source_document_id': card.sourceDocumentId,
+            'source_block_id': sourceBlock?.blockId,
+            'source_page_id': resolvedPageId,
+            'source_page_number': resolvedPageNumber,
+            'updated_at': _clock().millisecondsSinceEpoch,
+          },
+          where: whereParts.join(' AND '),
+          whereArgs: whereValues,
+        );
+      });
+      if (count == 0) {
+        return CardSourceTrace(
+          documentTitle: documentTitle,
+          sourceQuote: card.sourceQuote,
+          sourcePageNumber: card.sourcePageNumber,
+          warning: 'Thẻ đã thay đổi. Hãy mở lại để đối chiếu nguồn.',
+        );
+      }
+      referenceRepaired = true;
+      pageId = resolvedPageId;
+      pageNumber = resolvedPageNumber;
+    }
+    SourcePage? sourcePage;
+    File? imageFile;
+    String supportPath;
+    try {
+      final support = await _supportDirectory();
+      supportPath = support.path;
+      if (sourceBlock != null) {
+        final ocr = LocalOcrRepository(
+          database: _database,
+          documentRepository: LocalDocumentImportRepository(
+            database: _database,
+            supportDirectory: _supportDirectory,
+          ),
+        );
+        final currentBlocks = await ocr.getPageBlocks(sourceBlock.pageId);
+        sourceBlock = currentBlocks
+            .where((b) => b.blockId == sourceBlock!.blockId)
+            .firstOrNull;
+      }
+    } catch (_) {
+      return CardSourceTrace(
+        documentTitle: documentTitle,
+        sourceQuote: card.sourceQuote,
+        sourcePageNumber: pageNumber,
         warning: 'Không thể đọc ảnh nguồn trên thiết bị.',
       );
     }
@@ -356,7 +467,7 @@ class LocalDeckRepository implements DeckRepository {
       WHERE source_pages.page_id = ?
       LIMIT 1
       ''',
-      [card.sourcePageId],
+      [pageId],
     );
 
     if (pageRows.isNotEmpty) {
@@ -379,7 +490,8 @@ class LocalDeckRepository implements DeckRepository {
       sourcePage: sourcePage,
       sourceBlock: sourceBlock,
       imageFile: imageFile,
-      sourcePageNumber: card.sourcePageNumber,
+      sourcePageNumber: pageNumber,
+      sourceReferenceRepaired: referenceRepaired,
       imageUsesNormalizedCoordinates:
           imageFile != null &&
           (sourcePage?.normalizedAsset == null ||
@@ -413,17 +525,17 @@ class LocalDeckRepository implements DeckRepository {
           throw const FormatException('Deck không khớp.');
         }
         card.content.validate();
-        // Only persist source links that still belong to this document. Source
-        // quality is advisory; disappearing or edited OCR never discards a card.
         final rows = await txn.rawQuery(
-          "SELECT b.block_id, b.page_id, p.page_number FROM source_blocks b JOIN source_pages p ON p.page_id=b.page_id WHERE b.block_id=? AND p.document_id=? AND b.status!='deleted'",
-          [card.sourceBlockId, card.sourceDocumentId],
+          'SELECT b.* FROM source_blocks b JOIN source_pages p ON p.page_id=b.page_id AND p.document_id=b.document_id AND p.page_number=b.page_number WHERE b.document_id=?',
+          [card.sourceDocumentId],
         );
-        final source = rows.firstOrNull;
-        final pageMatches =
-            source != null &&
-            source['page_id'] == card.sourcePageId &&
-            source['page_number'] == card.sourcePageNumber;
+        final source = SourceReferenceResolver.resolve(
+          documentId: card.sourceDocumentId ?? '',
+          quote: card.sourceQuote,
+          blockId: card.sourceBlockId,
+          pageNumber: card.sourcePageNumber,
+          blocks: rows.map(_mapSourceBlockRow),
+        );
         await txn.insert('cards', {
           'tags': jsonEncode(CardContent.normalizeTags(card.tags)),
           'card_id': card.id,
@@ -439,9 +551,9 @@ class LocalDeckRepository implements DeckRepository {
                 })
               : null,
           'source_document_id': card.sourceDocumentId,
-          'source_page_id': pageMatches ? card.sourcePageId : null,
-          'source_page_number': pageMatches ? card.sourcePageNumber : null,
-          'source_block_id': source?['block_id'],
+          'source_page_id': source?.pageId,
+          'source_page_number': source?.pageNumber,
+          'source_block_id': source?.blockId,
           'source_quote': card.sourceQuote,
           'confidence': card.confidence,
           'status': card.status.name,
@@ -535,6 +647,7 @@ class LocalDeckRepository implements DeckRepository {
       rawText: row['raw_text'] as String,
       normalizedText: row['normalized_text'] as String,
       boundingBox: box,
+      boxImageSha256: row['box_image_sha256'] as String?,
       hasValidBox: (row['has_valid_box'] as int? ?? 1) == 1,
       confidence: (row['confidence'] as num?)?.toDouble(),
       confidenceSource: switch (row['confidence_source'] as String?) {

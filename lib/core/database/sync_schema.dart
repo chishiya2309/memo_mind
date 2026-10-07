@@ -13,6 +13,26 @@ const syncPrimaryKeys = <String, String>{
   'card_schedules': 'card_id',
 };
 
+/// Mirrors the server's required parents; optional card evidence is advisory.
+List<({String table, String entityId})> syncParents(String table, Map data) {
+  final fields = switch (table) {
+    'source_pages' => [('documents', 'document_id')],
+    'page_normalizations' => [('source_pages', 'page_id')],
+    'ocr_page_results' || 'source_blocks' => [
+      ('documents', 'document_id'),
+      ('source_pages', 'page_id'),
+    ],
+    'cards' => [('decks', 'deck_id')],
+    'card_schedules' => [('cards', 'card_id')],
+    'review_events' => [('review_sessions', 'session_id')],
+    _ => <(String, String)>[],
+  };
+  return [
+    for (final field in fields)
+      (table: field.$1, entityId: data[field.$2] as String),
+  ];
+}
+
 /// Triggers capture mutations in the transaction that changes study data.
 /// Incoming changes turn capture off; it is never disabled outside a transaction.
 Future<void> createSyncSchema(DatabaseExecutor db) async {
@@ -71,7 +91,25 @@ Future<void> createSyncSchema(DatabaseExecutor db) async {
   await db.execute(
     'CREATE TABLE sync_inbox(version INTEGER PRIMARY KEY,payload TEXT NOT NULL)',
   );
-  for (final entry in syncPrimaryKeys.entries) {
+  await createSyncCaptureTriggers(db, syncPrimaryKeys);
+  await db.execute(
+    '''CREATE TRIGGER sync_new_card_schedule AFTER INSERT ON cards
+    WHEN (SELECT applying FROM sync_control WHERE id=1)=0 BEGIN
+      INSERT OR IGNORE INTO card_schedules VALUES(NEW.card_id,NEW.repetitions,
+        NEW.interval_days,NEW.ease_factor,NEW.due_date,0,'','','sm2-v1'); END''',
+  );
+  for (final operation in ['INSERT', 'UPDATE', 'DELETE']) {
+    await db.execute(
+      'CREATE TRIGGER revision_card_schedules_${operation.toLowerCase()} AFTER $operation ON card_schedules BEGIN UPDATE workspace_revision SET revision=revision+1 WHERE id=1; END',
+    );
+  }
+}
+
+Future<void> createSyncCaptureTriggers(
+  DatabaseExecutor db,
+  Map<String, String> tables,
+) async {
+  for (final entry in tables.entries) {
     final columns = (await db.rawQuery('PRAGMA table_info(${entry.key})'))
         .map((r) => r['name'] as String)
         .toList();
@@ -99,16 +137,5 @@ Future<void> createSyncSchema(DatabaseExecutor db) async {
             $before,${json(row)},$deleted); END''',
       );
     }
-  }
-  await db.execute(
-    '''CREATE TRIGGER sync_new_card_schedule AFTER INSERT ON cards
-    WHEN (SELECT applying FROM sync_control WHERE id=1)=0 BEGIN
-      INSERT OR IGNORE INTO card_schedules VALUES(NEW.card_id,NEW.repetitions,
-        NEW.interval_days,NEW.ease_factor,NEW.due_date,0,'','','sm2-v1'); END''',
-  );
-  for (final operation in ['INSERT', 'UPDATE', 'DELETE']) {
-    await db.execute(
-      'CREATE TRIGGER revision_card_schedules_${operation.toLowerCase()} AFTER $operation ON card_schedules BEGIN UPDATE workspace_revision SET revision=revision+1 WHERE id=1; END',
-    );
   }
 }

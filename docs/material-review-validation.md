@@ -36,4 +36,4 @@ Kết luận: prompt cải thiện định hướng nhưng không bảo đảm c
 
 ## Phát hành
 
-Triển khai backend trước ứng dụng Flutter. Ứng dụng mới yêu cầu `reviewPolicy: "user_review"`; backend cũ sẽ được báo cần cập nhật. Không cần migration cơ sở dữ liệu. Kiểm chứng trên đây dùng unit/widget test và mẫu AI thực tế; chưa thay thế kiểm thử nhập ảnh/PDF trên thiết bị Android thật, và chưa triển khai lên production.
+Triển khai backend trước ứng dụng Flutter. Ứng dụng mới yêu cầu `reviewPolicy: "user_review"`; backend cũ sẽ được báo cần cập nhật. Bản sửa tọa độ/nguồn hiện tại có migration SQLite v11; xem [kiểm chứng nguồn](source-geometry-validation.md). Kiểm chứng trên đây dùng unit/widget test và mẫu AI thực tế; chưa thay thế kiểm thử nhập ảnh/PDF trên thiết bị Android thật, và chưa triển khai lên production.

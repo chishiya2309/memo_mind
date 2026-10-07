@@ -18,14 +18,14 @@ function zip(entries) {
   end.writeUInt32LE(0x06054b50); end.writeUInt16LE(entries.length, 8); end.writeUInt16LE(entries.length, 10); end.writeUInt32LE(dir.length, 12); end.writeUInt32LE(offset, 16);
   return Buffer.concat([...local, dir, end]);
 }
-function fixture({ backupId = 'backup-1', ownerUid = 'A', extra = [], source = false } = {}) {
-  const records = Object.fromEntries(tables.map(t => [t, []]));
+function fixture({ backupId = 'backup-1', ownerUid = 'A', extra = [], source = false, schemaVersion = 9 } = {}) {
+  const records = Object.fromEntries((schemaVersion >= 10 ? [...tables, 'card_schedules'] : tables).map(t => [t, []]));
   const bytes = Buffer.from('%PDF-reference');
   const files = source ? [{ fileKey: 'documents/d/original.pdf', sizeBytes: bytes.length, sha256: hash(bytes) }] : [];
   if (source) records.documents.push({ document_id: 'd', original_file_relative_path: files[0].fileKey, original_file_size_bytes: bytes.length, original_file_sha256: hash(bytes) });
   const data = canonical({ tables: records });
-  const fingerprint = hash(canonical({ schemaVersion: 9, schedulerVersion: 'sm2-v1', dataHash: hash(data), files }));
-  const manifest = { ownerUid, backupId, workspaceId: 'workspace-1', snapshotRevision: 0, snapshotAt: 100, schemaVersion: 9, schedulerVersion: 'sm2-v1', fingerprint, dataHash: hash(data), files };
+  const fingerprint = hash(canonical({ schemaVersion, schedulerVersion: 'sm2-v1', dataHash: hash(data), files }));
+  const manifest = { ownerUid, backupId, workspaceId: 'workspace-1', snapshotRevision: 0, snapshotAt: 100, schemaVersion, schedulerVersion: 'sm2-v1', fingerprint, dataHash: hash(data), files };
   const archive = zip([['data.json', data], ['manifest.json', canonical(manifest)], ...files.map(f => [`files/${f.fileKey}`, bytes]), ...extra]);
   const request = { ...manifest, sizeBytes: archive.length, fileCount: files.length, bundleHash: hash(archive), manifestHash: hash(canonical(manifest)) };
   delete request.files; delete request.dataHash;
@@ -121,6 +121,15 @@ test('delete failure retains intermediate state and a retry adjusts quota exactl
   assert.equal((await request('POST', '', f.request)).status, 409);
 }));
 module.exports = { fixture, zip, MemoryMetadata, MemoryObjects };
+
+test('backup v11 is accepted while v9/v10 archives remain readable', async () => {
+  for (const schemaVersion of [9, 10, 11]) {
+    const f = fixture({ schemaVersion });
+    assert.equal(require('../src/backup/validation').validateRequest(f.request, 'A').schemaVersion, schemaVersion);
+    const result = await inspectArchive(Readable.from(f.archive), f.request);
+    assert.deepEqual(result, { deckCount: 0, cardCount: 0 });
+  }
+});
 
 test('finalize recovers a completed S3 copy when the metadata commit failed', () => server(async ({ request, metadata, objects }) => {
   const f = fixture(); await request('POST', '', f.request); objects.values.set(keys(f.request).staging, f.archive);

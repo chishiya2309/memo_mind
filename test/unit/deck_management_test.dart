@@ -285,6 +285,7 @@ void main() {
             sourcePage: base.sourcePage,
             sourceBlock: base.sourceBlock!.copyWith(
               boundingBox: box,
+              boxImageSha256: base.sourcePage!.displayImage.sha256,
               hasValidBox: true,
             ),
             imageFile: File('fixture'),

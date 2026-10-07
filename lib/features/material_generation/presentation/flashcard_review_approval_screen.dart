@@ -2,6 +2,7 @@ import 'dart:io';
 
 import '../../deck_management/domain/deck_models.dart';
 import '../domain/material_validator.dart';
+import '../domain/source_reference_resolver.dart';
 
 import 'package:flutter/material.dart';
 
@@ -72,9 +73,18 @@ class _FlashcardReviewApprovalScreenState
   void initState() {
     super.initState();
     _deck = widget.targetDeck;
-    _cards = List.of(widget.initialCards)
-      ..sort((a, b) => a.type.index.compareTo(b.type.index));
     _blocksMap = {for (final b in widget.sourceBlocks) b.blockId: b};
+    _cards =
+        widget.initialCards
+            .map(
+              (c) => SourceReferenceResolver.resolveDraft(
+                c,
+                widget.documentId,
+                _blocksMap.values,
+              ),
+            )
+            .toList()
+          ..sort((a, b) => a.type.index.compareTo(b.type.index));
     _pagesMap = {for (final p in widget.sourcePages) p.pageNumber: p};
     _saveUseCase =
         widget.saveUseCase ??
@@ -239,14 +249,21 @@ class _FlashcardReviewApprovalScreenState
       final index = _cards.indexWhere((c) => c.id == card.id);
       if (index != -1 && mounted) {
         setState(() {
-          _cards[index] = result.cards.first.copyWith(
-            id: card.id,
-            status: DraftCardStatus.pending,
-          );
+          _cards[index] = SourceReferenceResolver.resolveDraft(
+            result.cards.first,
+            widget.documentId,
+            _blocksMap.values,
+          ).copyWith(id: card.id, status: DraftCardStatus.pending);
           _cards.addAll(
             result.cards
                 .skip(1)
-                .map((c) => c.copyWith(status: DraftCardStatus.pending)),
+                .map(
+                  (c) => SourceReferenceResolver.resolveDraft(
+                    c,
+                    widget.documentId,
+                    _blocksMap.values,
+                  ).copyWith(status: DraftCardStatus.pending),
+                ),
           );
         });
         ScaffoldMessenger.of(context).showSnackBar(

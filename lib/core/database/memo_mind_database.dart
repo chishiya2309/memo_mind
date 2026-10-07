@@ -58,9 +58,9 @@ class MemoMindDatabase {
     return openDatabase(
       _path ?? p.join(root, 'memo_mind.db'),
       singleInstance: false,
-      version: 10,
+      version: 11,
       onConfigure: (db) async => db.execute('PRAGMA foreign_keys = ON'),
-      onCreate: (db, version) => createV10(db),
+      onCreate: (db, version) => createV11(db),
       onUpgrade: (db, oldVersion, newVersion) async {
         if (oldVersion < 2) await migrateV1ToV2(db);
         if (oldVersion < 3) await migrateV2ToV3(db);
@@ -71,6 +71,7 @@ class MemoMindDatabase {
         if (oldVersion < 8) await migrateV7ToV8(db);
         if (oldVersion < 9) await migrateV8ToV9(db);
         if (oldVersion < 10) await migrateV9ToV10(db);
+        if (oldVersion < 11) await migrateV10ToV11(db);
       },
     );
   }
@@ -697,6 +698,21 @@ class MemoMindDatabase {
 
   static Future<void> migrateV9ToV10(DatabaseExecutor db) =>
       createSyncSchema(db);
+
+  static Future<void> createV11(DatabaseExecutor db) async {
+    await createV10(db);
+    await migrateV10ToV11(db);
+  }
+
+  static Future<void> migrateV10ToV11(DatabaseExecutor db) async {
+    await db.execute(
+      'ALTER TABLE source_blocks ADD COLUMN box_image_sha256 TEXT',
+    );
+    for (final operation in ['insert', 'update', 'delete']) {
+      await db.execute('DROP TRIGGER IF EXISTS sync_source_blocks_$operation');
+    }
+    await createSyncCaptureTriggers(db, {'source_blocks': 'block_id'});
+  }
 
   Future<T> studyTransaction<T>(Future<T> Function(Transaction) action) async {
     final db = await database;

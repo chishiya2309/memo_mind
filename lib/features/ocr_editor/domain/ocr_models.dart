@@ -2,20 +2,9 @@ import 'dart:ui';
 
 import '../../document_import/domain/document_import_models.dart';
 
-enum BlockStatus {
-  draft,
-  needsReview,
-  verified,
-  userAdded,
-  deleted,
-}
+enum BlockStatus { draft, needsReview, verified, userAdded, deleted }
 
-enum ConfidenceSource {
-  mlkit,
-  gemini,
-  user,
-  unavailable,
-}
+enum ConfidenceSource { mlkit, gemini, user, unavailable }
 
 class NormalizedBoundingBox {
   const NormalizedBoundingBox({
@@ -38,24 +27,37 @@ class NormalizedBoundingBox {
   );
 
   static NormalizedBoundingBox? fromRect(Rect? rect, Size imageSize) {
-    if (rect == null || imageSize.width <= 0 || imageSize.height <= 0) {
+    if (rect == null ||
+        !rect.isFinite ||
+        !imageSize.width.isFinite ||
+        !imageSize.height.isFinite ||
+        imageSize.width <= 0 ||
+        imageSize.height <= 0 ||
+        rect.width <= 0 ||
+        rect.height <= 0) {
       return null;
     }
+    final clipped = rect.intersect(Offset.zero & imageSize);
+    if (clipped.isEmpty) return null;
+    final l = clipped.left / imageSize.width;
+    final t = clipped.top / imageSize.height;
+    final w = clipped.width / imageSize.width;
+    final h = clipped.height / imageSize.height;
 
-    final double l = (rect.left / imageSize.width).clamp(0.0, 1.0);
-    final double t = (rect.top / imageSize.height).clamp(0.0, 1.0);
-    final double w = (rect.width / imageSize.width).clamp(0.0, 1.0 - l);
-    final double h = (rect.height / imageSize.height).clamp(0.0, 1.0 - t);
-
-    return NormalizedBoundingBox(
-      left: l,
-      top: t,
-      width: w,
-      height: h,
-    );
+    return NormalizedBoundingBox(left: l, top: t, width: w, height: h);
   }
 
-  bool get isValid => width > 0 && height > 0;
+  bool get isValid =>
+      left.isFinite &&
+      top.isFinite &&
+      width.isFinite &&
+      height.isFinite &&
+      left >= 0 &&
+      top >= 0 &&
+      width > 0 &&
+      height > 0 &&
+      left + width <= 1 + 1e-9 &&
+      top + height <= 1 + 1e-9;
 
   @override
   bool operator ==(Object other) =>
@@ -69,11 +71,11 @@ class NormalizedBoundingBox {
 
   @override
   int get hashCode => Object.hash(
-        (left * 1000).round(),
-        (top * 1000).round(),
-        (width * 1000).round(),
-        (height * 1000).round(),
-      );
+    (left * 1000).round(),
+    (top * 1000).round(),
+    (width * 1000).round(),
+    (height * 1000).round(),
+  );
 
   @override
   String toString() =>
@@ -90,6 +92,7 @@ class SourceBlock {
     required this.rawText,
     required this.normalizedText,
     this.boundingBox,
+    this.boxImageSha256,
     this.hasValidBox = true,
     this.confidence,
     this.confidenceSource = ConfidenceSource.mlkit,
@@ -106,6 +109,7 @@ class SourceBlock {
   final String rawText;
   final String normalizedText;
   final NormalizedBoundingBox? boundingBox;
+  final String? boxImageSha256;
   final bool hasValidBox;
   final double? confidence;
   final ConfidenceSource confidenceSource;
@@ -119,6 +123,16 @@ class SourceBlock {
   bool get isDeleted => status == BlockStatus.deleted;
   bool get isVerified => status == BlockStatus.verified;
 
+  bool hasBoxFor(SourcePage page) =>
+      !isDeleted &&
+      hasValidBox &&
+      boundingBox?.isValid == true &&
+      documentId == page.documentId &&
+      pageId == page.pageId &&
+      pageNumber == page.pageNumber &&
+      boxImageSha256 != null &&
+      boxImageSha256 == page.displayImage.sha256;
+
   SourceBlock copyWith({
     String? blockId,
     String? documentId,
@@ -128,6 +142,7 @@ class SourceBlock {
     String? rawText,
     String? normalizedText,
     NormalizedBoundingBox? boundingBox,
+    String? boxImageSha256,
     bool? hasValidBox,
     double? confidence,
     ConfidenceSource? confidenceSource,
@@ -144,6 +159,7 @@ class SourceBlock {
       rawText: rawText ?? this.rawText,
       normalizedText: normalizedText ?? this.normalizedText,
       boundingBox: boundingBox ?? this.boundingBox,
+      boxImageSha256: boxImageSha256 ?? this.boxImageSha256,
       hasValidBox: hasValidBox ?? this.hasValidBox,
       confidence: confidence ?? this.confidence,
       confidenceSource: confidenceSource ?? this.confidenceSource,
@@ -154,12 +170,7 @@ class SourceBlock {
   }
 }
 
-enum OcrPageStatus {
-  notStarted,
-  processing,
-  completed,
-  failed,
-}
+enum OcrPageStatus { notStarted, processing, completed, failed }
 
 class OcrPageReview {
   const OcrPageReview({
@@ -192,10 +203,7 @@ class OcrPageReview {
 }
 
 class OcrDocumentReview {
-  const OcrDocumentReview({
-    required this.document,
-    required this.pageReviews,
-  });
+  const OcrDocumentReview({required this.document, required this.pageReviews});
 
   final ImportedDocument document;
   final List<OcrPageReview> pageReviews;

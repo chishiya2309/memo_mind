@@ -203,6 +203,7 @@ class CardSourceTrace {
     this.imageFile,
     this.sourcePageNumber,
     this.imageUsesNormalizedCoordinates = false,
+    this.sourceReferenceRepaired = false,
     this.warning,
   });
 
@@ -213,6 +214,7 @@ class CardSourceTrace {
   final File? imageFile;
   final int? sourcePageNumber;
   final bool imageUsesNormalizedCoordinates;
+  final bool sourceReferenceRepaired;
   final String? warning;
 
   SourcePage? get page => sourcePage;

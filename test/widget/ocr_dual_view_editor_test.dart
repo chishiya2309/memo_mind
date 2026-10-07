@@ -1,3 +1,6 @@
+import 'dart:io';
+
+import 'package:image/image.dart' as img;
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:memo_mind/features/document_import/domain/document_import_models.dart';
@@ -59,25 +62,35 @@ class _FakeOcrRepository implements OcrRepository {
 }
 
 void main() {
-  final page1 = SourcePage(
-    pageId: 'p-1',
-    documentId: 'doc-1',
-    pageNumber: 1,
-    originalPageNumber: 1,
-    source: DocumentPageSource.gallery,
-    dataRelativePath: 'p1.jpg',
-    absolutePath: 'p1.jpg',
-    mimeType: 'image/jpeg',
-    fileSizeBytes: 1000,
-    width: 800,
-    height: 1200,
-    sha256: 'h1',
-    qualityCode: 'ok',
-    qualityWarningAccepted: false,
-    createdAt: DateTime.now(),
-  );
+  late SourcePage page1;
+  late Directory root;
+  setUp(() async {
+    root = await Directory.systemTemp.createTemp('ocr-editor-');
+    final raster = File('${root.path}/page.png');
+    await raster.writeAsBytes(
+      img.encodePng(img.Image(width: 800, height: 1200)),
+    );
+    page1 = SourcePage(
+      pageId: 'p-1',
+      documentId: 'doc-1',
+      pageNumber: 1,
+      originalPageNumber: 1,
+      source: DocumentPageSource.gallery,
+      dataRelativePath: 'p1.jpg',
+      absolutePath: raster.path,
+      mimeType: 'image/jpeg',
+      fileSizeBytes: 1000,
+      width: 800,
+      height: 1200,
+      sha256: 'h1',
+      qualityCode: 'ok',
+      qualityWarningAccepted: false,
+      createdAt: DateTime.now(),
+    );
+  });
+  tearDown(() => root.delete(recursive: true));
 
-  final testDoc = ImportedDocument(
+  ImportedDocument testDoc() => ImportedDocument(
     documentId: 'doc-1',
     title: 'Tài liệu ôn tập',
     status: ImportedDocumentStatus.pendingOcrReview,
@@ -102,6 +115,7 @@ void main() {
       height: 0.1,
     ),
     hasValidBox: true,
+    boxImageSha256: 'h1',
     confidence: 0.95,
     confidenceSource: ConfidenceSource.mlkit,
     status: BlockStatus.draft,
@@ -124,6 +138,7 @@ void main() {
       height: 0.1,
     ),
     hasValidBox: true,
+    boxImageSha256: 'h1',
     confidence: 0.50,
     confidenceSource: ConfidenceSource.mlkit,
     status: BlockStatus.needsReview,
@@ -143,8 +158,9 @@ void main() {
         updatedAt: DateTime.now(),
       );
 
+      final document = testDoc();
       final docReview = OcrDocumentReview(
-        document: testDoc,
+        document: document,
         pageReviews: [pageReview],
       );
 
@@ -154,18 +170,42 @@ void main() {
         MaterialApp(
           theme: MemoTheme.light,
           home: OcrDualViewEditorScreen(
-            document: testDoc,
+            document: document,
             ocrRepository: fakeRepo,
           ),
         ),
       );
 
+      await tester.runAsync(() async {
+        await precacheImage(
+          FileImage(File(page1.absolutePath)),
+          tester.element(find.byType(OcrDualViewEditorScreen)),
+        );
+      });
       await tester.pumpAndSettle();
 
       // Verify both blocks displayed
       expect(find.text('Nội dung câu 1'), findsOneWidget);
       expect(find.text('Nội dung câu 2 cần kiểm tra'), findsOneWidget);
       expect(find.text('Cần kiểm tra'), findsWidgets);
+      final viewer = tester.widget<InteractiveViewer>(
+        find.byType(InteractiveViewer),
+      );
+      final viewport = tester.getRect(find.byType(InteractiveViewer));
+      await tester.tap(find.text('#1'));
+      await tester.pumpAndSettle();
+      final focused = tester.getRect(find.byType(Image));
+      // The center of block #1 is (.5, .15) in the raster, even with margins.
+      expect(
+        focused.left + focused.width * .5,
+        closeTo(viewport.center.dx, .01),
+      );
+      expect(
+        focused.top + focused.height * .15,
+        closeTo(viewport.center.dy, .01),
+      );
+      viewer.transformationController!.value = Matrix4.identity();
+      await tester.pump();
 
       // Test filter 'Cần kiểm tra (1)'
       await tester.tap(find.text('Cần kiểm tra (1)'));

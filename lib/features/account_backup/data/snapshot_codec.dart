@@ -202,7 +202,7 @@ class SnapshotCodec {
       final fingerprint = contentHash(
         utf8.encode(
           canonicalJson({
-            'schemaVersion': 10,
+            'schemaVersion': 11,
             'schedulerVersion': 'sm2-v1',
             'dataHash': contentHash(dataBytes),
             'files': files,
@@ -215,7 +215,7 @@ class SnapshotCodec {
         'workspaceId': workspace.record.id,
         'snapshotRevision': revision,
         'snapshotAt': at,
-        'schemaVersion': 10,
+        'schemaVersion': 11,
         'schedulerVersion': 'sm2-v1',
         'fingerprint': fingerprint,
         'dataHash': contentHash(dataBytes),
@@ -265,7 +265,7 @@ class SnapshotCodec {
   ) async {
     if (expected['ownerUid'] != uid ||
         expected['status'] != 'ready' ||
-        ![9, 10].contains(expected['schemaVersion']) ||
+        ![9, 10, 11].contains(expected['schemaVersion']) ||
         expected['schedulerVersion'] != 'sm2-v1') {
       throw const AccountFailure(
         'incompatible_backup',

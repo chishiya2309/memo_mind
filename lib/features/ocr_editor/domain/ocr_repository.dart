@@ -12,6 +12,7 @@ abstract class OcrRepository {
     required List<SourceBlock> blocks,
     required String rawFullText,
     String? language,
+    String? imageSha256,
   });
 
   Future<void> recordPageOcrFailure({

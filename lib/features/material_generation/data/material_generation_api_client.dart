@@ -4,6 +4,7 @@ import 'package:uuid/uuid.dart';
 import '../../../core/network/backend_api_client.dart';
 import '../../ocr_editor/domain/ocr_models.dart';
 import '../domain/material_generation_models.dart';
+import '../domain/source_reference_resolver.dart';
 
 class MaterialGenerationApiClient {
   MaterialGenerationApiClient({String? baseUrl, http.Client? httpClient})
@@ -55,7 +56,15 @@ class MaterialGenerationApiClient {
           ),
       ];
       return MaterialGenerationResult(
-        cards: List.unmodifiable(cards),
+        cards: List.unmodifiable(
+          cards.map(
+            (card) => SourceReferenceResolver.resolveDraft(
+              card,
+              documentId,
+              sourceBlocks,
+            ),
+          ),
+        ),
         totalGenerated: cards.length,
         validCount: cards.length,
         discardedCount: 0,

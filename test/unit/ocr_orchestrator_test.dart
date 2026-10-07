@@ -1,4 +1,5 @@
 import 'dart:ui';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:memo_mind/features/document_import/domain/document_import_models.dart';
 import 'package:memo_mind/features/ocr_editor/application/ocr_orchestrator.dart';
@@ -19,6 +20,7 @@ class _FakeOcrRepository implements OcrRepository {
     required List<SourceBlock> blocks,
     required String rawFullText,
     String? language,
+    String? imageSha256,
   }) async {
     savedBlocksByPage[pageId] = blocks;
   }
@@ -174,7 +176,7 @@ void main() {
       // High confidence block should be draft
       expect(p1Blocks[0].status, BlockStatus.draft);
       expect(p1Blocks[0].boundingBox?.left, 0.1); // 100 / 1000
-      expect(p1Blocks[0].boundingBox?.top, 0.1);  // 200 / 2000
+      expect(p1Blocks[0].boundingBox?.top, 0.1); // 200 / 2000
 
       // Low confidence block (< 0.75) should be needsReview
       expect(p1Blocks[1].status, BlockStatus.needsReview);

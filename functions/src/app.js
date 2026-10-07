@@ -137,6 +137,7 @@ function createApp({ providers = createProviders(), deadlineMs = 75000, rateLimi
     if (res.headersSent) return next(error);
     const status = error instanceof ApiError ? error.status : error.type === 'entity.too.large' ? 413 : error.type === 'entity.parse.failed' ? 400 : 500;
     res.status(status).json({ error: error instanceof ApiError ? error.code : (status === 413 ? 'payload_too_large' : status === 400 ? 'invalid_request' : 'server_error'),
+      ...(error instanceof ApiError && error.code === 'missing_parent' ? { missingParents: error.missingParents || [] } : {}),
       message: error instanceof ApiError ? error.message : status === 413 ? 'Nội dung yêu cầu quá lớn.' : status === 400 ? 'JSON yêu cầu không hợp lệ.' : 'Không thể xử lý yêu cầu lúc này.' });
   });
   return app;

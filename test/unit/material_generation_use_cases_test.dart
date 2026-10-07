@@ -51,6 +51,7 @@ class _FakeOcrRepository implements OcrRepository {
     required List<SourceBlock> blocks,
     required String rawFullText,
     String? language,
+    String? imageSha256,
   }) async {}
 
   @override

@@ -42,6 +42,7 @@ class SyncController extends ChangeNotifier {
         _debounce?.cancel();
         _uid = identity?.uid;
         conflicts = [];
+        cleanupReport = const OrphanCleanupReport(0, []);
         lastSynced = null;
         needsMigration = false;
         error = null;
@@ -117,6 +118,7 @@ class SyncController extends ChangeNotifier {
   };
   DateTime? lastSynced;
   List<Map<String, dynamic>> conflicts = [];
+  OrphanCleanupReport cleanupReport = const OrphanCleanupReport(0, []);
   WorkspaceRecord? migrationSource;
   Future<void> Function({bool force})? checkpoint;
   bool get busy => _running;
@@ -139,6 +141,7 @@ class SyncController extends ChangeNotifier {
     if (_disposed || epoch != _epoch) return;
     lastSynced = null;
     conflicts = [];
+    cleanupReport = const OrphanCleanupReport(0, []);
     automatic = false;
     pendingChanges = false;
     error = null;
@@ -160,6 +163,7 @@ class SyncController extends ChangeNotifier {
     final local = LocalSyncStore(context);
     final last = await local.setting('lastSynced');
     final savedConflicts = await local.conflicts();
+    final savedCleanup = await local.cleanupReport();
     final savedAutomatic = await local.setting('automaticSync') == '1';
     final savedPending = await local.hasPending;
     final mediaPending = await local.setting('mediaPending') == '1';
@@ -168,6 +172,7 @@ class SyncController extends ChangeNotifier {
         ? null
         : DateTime.fromMillisecondsSinceEpoch(int.parse(last));
     conflicts = savedConflicts;
+    cleanupReport = savedCleanup;
     automatic = savedAutomatic;
     pendingChanges = savedPending;
     mediaPhase = mediaPending ? SyncMediaPhase.pending : SyncMediaPhase.idle;
@@ -383,6 +388,7 @@ class SyncController extends ChangeNotifier {
       }
       needsMigration = false;
       await _pull(local, uid, context, epoch);
+      final recoveredParents = <String>{};
       while (true) {
         _check(context, uid, epoch);
         final packet = await local.nextPacket(
@@ -394,6 +400,18 @@ class SyncController extends ChangeNotifier {
           result = await _pushPacket(packet, uid, context, epoch);
         } on AccountFailure catch (failure) {
           _check(context, uid, epoch);
+          if (failure.code == 'missing_parent' && failure.httpStatus == 409) {
+            final signature =
+                failure.missingParents
+                    .map((p) => '${p['table']}:${p['entityId']}')
+                    .toList()
+                  ..sort();
+            if (recoveredParents.add(signature.join('|'))) {
+              await local.recoverMissingParents(packet, failure.missingParents);
+              _check(context, uid, epoch);
+              continue;
+            }
+          }
           if (failure.code == 'conflict_changed' &&
               packet.body['resolveConflictId'] != null) {
             await local.requeueRejectedResolution(packet);
@@ -470,8 +488,10 @@ class SyncController extends ChangeNotifier {
       try {
         if (_valid(context, uid, epoch)) {
           final pending = await local.hasPending;
+          final cleaned = await local.cleanupReport();
           if (_valid(context, uid, epoch)) {
             pendingChanges = pending;
+            cleanupReport = cleaned;
             if (error == null && pending && !needsMigration) {
               phase = SyncPhase.pending;
             }

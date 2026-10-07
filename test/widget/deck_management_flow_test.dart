@@ -363,6 +363,7 @@ void main() {
         orderIndex: 0,
         rawText: 'Quote',
         normalizedText: 'Quote',
+        boxImageSha256: 'fixture',
         boundingBox: const NormalizedBoundingBox(
           left: .1,
           top: .1,

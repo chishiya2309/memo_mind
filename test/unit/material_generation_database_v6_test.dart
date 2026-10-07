@@ -179,10 +179,12 @@ void main() {
       final saved = await repo.getCardsForDeck(deck.id);
       expect(saved.length, 3);
       expect(saved[0].sourceQuote, 'not in source');
-      expect(saved[0].sourceBlockId, 'b');
+      expect(saved[0].sourceBlockId, isNull);
       expect(saved[1].sourceBlockId, isNull);
       expect(saved[1].sourcePageId, isNull);
-      expect(saved[2].sourcePageId, isNull);
+      expect(saved[2].sourcePageId, 'p');
+      expect(saved[2].sourcePageNumber, 1);
+      expect(saved[2].sourceBlockId, 'b');
       await db.update(
         'source_blocks',
         {'status': 'deleted'},

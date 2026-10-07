@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../../../shared/theme/memo_theme.dart';
 import '../../document_import/domain/document_import_models.dart';
+import '../../document_import/presentation/source_raster_view.dart';
 import '../../ocr_editor/domain/ocr_models.dart';
 import '../domain/material_validator.dart';
 
@@ -53,28 +54,14 @@ class SourceInspectionModal extends StatelessWidget {
     ),
   );
 
-  bool get _validBox {
-    final b = sourceBlock?.boundingBox;
-    return imageUsesNormalizedCoordinates &&
-        sourceBlock != null &&
-        sourcePage != null &&
-        sourceBlock!.pageId == sourcePage!.pageId &&
-        sourceBlock!.documentId == sourcePage!.documentId &&
-        sourceBlock!.pageNumber == sourcePage!.pageNumber &&
-        !sourceBlock!.isDeleted &&
-        sourceBlock!.hasValidBox &&
-        b != null &&
-        b.left.isFinite &&
-        b.top.isFinite &&
-        b.width.isFinite &&
-        b.height.isFinite &&
-        b.left >= 0 &&
-        b.top >= 0 &&
-        b.width > 0 &&
-        b.height > 0 &&
-        b.left + b.width <= 1 &&
-        b.top + b.height <= 1;
-  }
+  bool get _validBox =>
+      imageUsesNormalizedCoordinates &&
+      sourcePage != null &&
+      sourceBlock?.hasBoxFor(sourcePage!) == true &&
+      MaterialValidator.isQuoteSupported(
+        sourceQuote,
+        sourceBlock!.normalizedText,
+      );
 
   @override
   Widget build(BuildContext context) {
@@ -179,6 +166,12 @@ class SourceInspectionModal extends StatelessWidget {
     if (width <= 0 || height <= 0) {
       return const Text('Kích thước ảnh nguồn không hợp lệ.');
     }
+    final raster = SourceImage(
+      path: file.path,
+      width: width,
+      height: height,
+      sha256: usesNormalized ? page.normalizedAsset!.sha256 : page.sha256,
+    );
     return Column(
       children: [
         if (!_validBox) const Text('Vị trí đoạn nguồn không khả dụng.'),
@@ -186,39 +179,16 @@ class SourceInspectionModal extends StatelessWidget {
           height: 320,
           child: InteractiveViewer(
             maxScale: 4,
-            child: Center(
-              child: AspectRatio(
-                aspectRatio: width / height,
-                child: Image.file(
-                  file,
-                  fit: BoxFit.fill,
-                  errorBuilder: (_, error, stack) => const Center(
-                    child: Text(
-                      'Không thể đọc ảnh nguồn. Đoạn trích vẫn được giữ lại.',
-                    ),
-                  ),
-                  frameBuilder: (context, image, frame, sync) {
-                    if (frame == null && !sync) {
-                      return const Center(child: CircularProgressIndicator());
-                    }
-                    return Stack(
-                      fit: StackFit.expand,
-                      children: [
-                        image,
-                        if (_validBox &&
-                            (page.normalizedAsset == null || usesNormalized))
-                          CustomPaint(
-                            key: const Key('source-highlight'),
-                            painter: _BoundingBoxHighlightPainter(
-                              box: sourceBlock!.boundingBox!,
-                              color: p.warning,
-                            ),
-                          ),
-                      ],
-                    );
-                  },
-                ),
-              ),
+            child: SourceRasterView(
+              image: raster,
+              highlightKey: const Key('source-highlight'),
+              painter:
+                  _validBox && (page.normalizedAsset == null || usesNormalized)
+                  ? _BoundingBoxHighlightPainter(
+                      box: sourceBlock!.boundingBox!,
+                      color: p.warning,
+                    )
+                  : null,
             ),
           ),
         ),
