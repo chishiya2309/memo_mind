@@ -3,6 +3,7 @@ import '../../deck_management/domain/deck_repository.dart';
 import '../../ocr_editor/domain/ocr_repository.dart';
 import '../domain/material_generation_models.dart';
 import '../domain/material_validator.dart';
+import '../domain/source_reference_resolver.dart';
 
 class SaveAcceptedCardsUseCase {
   const SaveAcceptedCardsUseCase({
@@ -26,13 +27,13 @@ class SaveAcceptedCardsUseCase {
     final now = DateTime.now();
     final cards = <CardEntity>[];
     for (final draft in accepted) {
-      final candidate = blocks[draft.sourceBlockId];
-      final block =
-          candidate != null &&
-              !candidate.isDeleted &&
-              candidate.documentId == documentId
-          ? candidate
-          : null;
+      final block = SourceReferenceResolver.resolve(
+        documentId: documentId,
+        quote: draft.sourceQuote,
+        blockId: draft.sourceBlockId,
+        pageNumber: draft.sourcePage,
+        blocks: blocks.values,
+      );
       final errors = MaterialValidator.errors(draft, requireSource: false);
       if (errors.isNotEmpty) throw FormatException(errors.values.first);
       cards.add(
@@ -46,12 +47,8 @@ class SaveAcceptedCardsUseCase {
           correctOptionId: draft.correctOptionId,
           explanation: draft.explanation,
           sourceDocumentId: documentId,
-          sourcePageId: block?.pageNumber == draft.sourcePage
-              ? block?.pageId
-              : null,
-          sourcePageNumber: block?.pageNumber == draft.sourcePage
-              ? draft.sourcePage
-              : null,
+          sourcePageId: block?.pageId,
+          sourcePageNumber: block?.pageNumber,
           sourceBlockId: block?.blockId,
           sourceQuote: draft.sourceQuote,
           confidence: draft.confidence,

@@ -17,10 +17,12 @@ class AccountFailure implements Exception {
     this.httpStatus,
     this.storageCode,
     this.requestId,
+    this.missingParents = const [],
   });
   final String code, message;
   final int? httpStatus;
   final String? storageCode, requestId;
+  final List<Map<String, String>> missingParents;
   @override
   String toString() => message;
 }

@@ -148,6 +148,21 @@ class BackupApiClient {
                   ? 'service_unavailable'
                   : 'backup_failed'),
           decoded['message'] as String? ?? 'Chưa thực hiện được yêu cầu. Dữ liệu trên thiết bị được giữ nguyên.',
+          httpStatus: response.statusCode,
+          requestId: response.headers['x-request-id'],
+          missingParents: [
+            for (final parent
+                in decoded['missingParents'] is List
+                    ? decoded['missingParents'] as List
+                    : const [])
+              if (parent is Map &&
+                  parent['table'] is String &&
+                  parent['entityId'] is String)
+                {
+                  'table': parent['table'] as String,
+                  'entityId': parent['entityId'] as String,
+                },
+          ],
         );
       }
       return decoded;

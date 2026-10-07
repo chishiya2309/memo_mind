@@ -4,7 +4,7 @@ const columns = {
   source_pages: 'page_id document_id page_number original_page_number source data_relative_path mime_type file_size_bytes width height sha256 quality_code quality_warning_accepted created_at normalization_status',
   page_normalizations: 'page_id revision normalized_relative_path mime_type file_size_bytes width height sha256 top_left_x top_left_y top_right_x top_right_y bottom_right_x bottom_right_y bottom_left_x bottom_left_y rotation_degrees contrast updated_at',
   ocr_page_results: 'page_id document_id status recognized_language raw_full_text error_message updated_at',
-  source_blocks: 'block_id page_id document_id page_number order_index raw_text normalized_text box_left box_top box_width box_height has_valid_box confidence confidence_source status created_at updated_at',
+  source_blocks: 'block_id page_id document_id page_number order_index raw_text normalized_text box_left box_top box_width box_height box_image_sha256 has_valid_box confidence confidence_source status created_at updated_at',
   decks: 'deck_id title description tone card_count tags status created_at updated_at',
   cards: 'card_id deck_id type front back mcq_payload tags source_document_id source_page_id source_page_number source_block_id source_quote confidence status created_at updated_at',
   review_sessions: 'session_id deck_id due_only initial_count status created_at updated_at device_id',
@@ -39,7 +39,8 @@ function validateRow(table, row) {
   const choice = (f, values) => values.includes(row[f]);
   const text = f => typeof row[f] === 'string';
   const unit = f => row[f] === null || (typeof row[f] === 'number' && row[f] >= 0 && row[f] <= 1);
-  if (columns[table].split(' ').some(f => !Object.hasOwn(row, f))) reject();
+  // v10 clients and frozen packets do not contain the nullable geometry binding.
+  if (columns[table].split(' ').some(f => f !== 'box_image_sha256' && !Object.hasOwn(row, f))) reject();
   for (const f of ['created_at', 'updated_at']) if (columns[table].split(' ').includes(f) && !integer(f)) reject();
   if ('tags' in row) {
     let tags; try { tags = JSON.parse(row.tags); } catch { reject(); }
@@ -59,6 +60,7 @@ function validateRow(table, row) {
   }
   if (table === 'ocr_page_results' && (!validId(row.document_id) || (row.raw_full_text !== null && !text('raw_full_text')) || !choice('status',['not_started','processing','completed','failed']))) reject();
   if (table === 'source_blocks' && (!validId(row.page_id) || !validId(row.document_id) || !integer('page_number',1) || !integer('order_index') || !text('raw_text') || !text('normalized_text') || !choice('has_valid_box',[0,1]) || !choice('confidence_source',['mlkit','gemini','user','unavailable']) || !choice('status',['draft','needs_review','verified','user_added','deleted']) || ['box_left','box_top','box_width','box_height','confidence'].some(f => !unit(f)))) reject();
+  if (table === 'source_blocks' && row.box_image_sha256 != null && !/^[a-f0-9]{64}$/.test(row.box_image_sha256)) reject();
   if (table === 'cards') {
     if (!['BASIC', 'CLOZE', 'MCQ'].includes(row.type) || !['active', 'suspended', 'deleted'].includes(row.status) || typeof row.front !== 'string' || typeof row.back !== 'string' || !validId(row.deck_id)) fail('invalid_sync', 'Nội dung thẻ không hợp lệ.');
     if (row.type === 'MCQ' && row.status === 'active') {

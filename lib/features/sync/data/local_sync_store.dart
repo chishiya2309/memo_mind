@@ -46,6 +46,12 @@ class SyncPacket {
   final List<int> sequences;
 }
 
+class OrphanCleanupReport {
+  const OrphanCleanupReport(this.total, this.entries);
+  final int total;
+  final List<Map<String, dynamic>> entries;
+}
+
 class LocalSyncStore {
   LocalSyncStore(this.workspace);
   final WorkspaceContext workspace;
@@ -65,6 +71,18 @@ class LocalSyncStore {
         'key': key,
         'value': value,
       }, conflictAlgorithm: ConflictAlgorithm.replace);
+  Future<OrphanCleanupReport> cleanupReport() async {
+    final raw = await setting('orphanCleanupLog');
+    if (raw == null) return const OrphanCleanupReport(0, []);
+    final report = jsonDecode(raw) as Map;
+    return OrphanCleanupReport(
+      report['total'] as int,
+      (report['entries'] as List)
+          .map((entry) => Map<String, dynamic>.from(entry as Map))
+          .toList(),
+    );
+  }
+
   Future<bool> get hasPending async =>
       (await (await database).query('sync_outbox', limit: 1)).isNotEmpty;
   Future<int> get cursor async => int.parse(await setting('cursor') ?? '0');
@@ -155,11 +173,30 @@ class LocalSyncStore {
         );
       }
       while (true) {
-        final first = await txn.query(
-          'sync_outbox',
-          orderBy: 'sequence',
-          limit: 1,
+        final priority = await txn.query(
+          'sync_state',
+          where: 'key=?',
+          whereArgs: ['repairGroup'],
         );
+        var first = priority.isEmpty
+            ? <Map<String, Object?>>[]
+            : await txn.query(
+                'sync_outbox',
+                where: 'group_id=?',
+                whereArgs: [priority.single['value']],
+                orderBy: 'sequence',
+                limit: 1,
+              );
+        if (first.isEmpty && priority.isNotEmpty) {
+          await txn.delete(
+            'sync_state',
+            where: 'key=?',
+            whereArgs: ['repairGroup'],
+          );
+        }
+        if (first.isEmpty) {
+          first = await txn.query('sync_outbox', orderBy: 'sequence', limit: 1);
+        }
         if (first.isEmpty) return null;
         final group = first.single['group_id'];
         final rows = (await txn.query(
@@ -172,7 +209,7 @@ class LocalSyncStore {
           'sync_state',
           where: "key LIKE 'resolve.%' OR key LIKE 'restore.%'",
         )).map((r) => r['key'] as String).toSet();
-        final restoring = rows.any(
+        var restoring = rows.any(
           (r) => markers.contains('restore.${r['operation_id']}'),
         );
         bool resolving(List<Map<String, Object?>> values) =>
@@ -185,7 +222,7 @@ class LocalSyncStore {
           final groups = await txn.rawQuery(
             'SELECT group_id FROM sync_outbox GROUP BY group_id ORDER BY MIN(sequence) LIMIT 50',
           );
-          for (final candidate in groups.skip(1)) {
+          for (final candidate in groups.where((g) => g['group_id'] != group)) {
             final additional = await txn.query(
               'sync_outbox',
               where: 'group_id=?',
@@ -209,6 +246,10 @@ class LocalSyncStore {
             bytes += extraBytes;
           }
         }
+        if (await _includeParents(txn, rows, markers, restoring)) continue;
+        restoring = rows.any(
+          (r) => markers.contains('restore.${r['operation_id']}'),
+        );
         rows.sort(
           (a, b) => (a['sequence'] as int).compareTo(b['sequence'] as int),
         );
@@ -247,7 +288,9 @@ class LocalSyncStore {
         final operations = compact.values
             .where(
               (op) =>
-                  (op['fields'] as List).isNotEmpty || op['deleted'] == true,
+                  (op['fields'] as List).isNotEmpty ||
+                  op['deleted'] == true ||
+                  op['baseVersion'] == 0,
             )
             .toList();
         if (operations.isEmpty) {
@@ -311,6 +354,439 @@ class LocalSyncStore {
     });
   }
 
+  /// Returns true when an orphan was removed and the outbox must be reread.
+  Future<bool> _includeParents(
+    Transaction txn,
+    List<Map<String, Object?>> rows,
+    Set<String> markers,
+    bool restoring,
+  ) async {
+    final includedGroups = rows.map((r) => r['group_id']).toSet();
+    final checked = <String>{};
+    for (var index = 0; index < rows.length; index++) {
+      final row = rows[index];
+      if (row['deleted'] == 1) continue;
+      final data = jsonDecode(row['data'] as String) as Map;
+      for (final parent in syncParents(row['table_name'] as String, data)) {
+        final key = '${parent.table}:${parent.entityId}';
+        if (!checked.add(key)) continue;
+        final meta = await txn.query(
+          'sync_meta',
+          where: 'table_name=? AND entity_id=?',
+          whereArgs: [parent.table, parent.entityId],
+        );
+        final ack = await txn.query(
+          'sync_state',
+          where: 'key=?',
+          whereArgs: ['ack.$key'],
+        );
+        if (meta.isNotEmpty || ack.isNotEmpty) continue;
+        var pending = await txn.query(
+          'sync_outbox',
+          where: 'table_name=? AND entity_id=?',
+          whereArgs: [parent.table, parent.entityId],
+          orderBy: 'sequence',
+        );
+        if (pending.isNotEmpty && pending.last['deleted'] == 1) {
+          final local = await txn.query(
+            parent.table,
+            where: '${syncPrimaryKeys[parent.table]}=?',
+            whereArgs: [parent.entityId],
+          );
+          if (local.isEmpty || local.single['status'] == 'deleted') {
+            if (await _discardOrphans(txn, {key}) > 0) return true;
+          }
+        }
+        if (pending.isEmpty) {
+          final local = await txn.query(
+            parent.table,
+            where: '${syncPrimaryKeys[parent.table]}=?',
+            whereArgs: [parent.entityId],
+          );
+          if (local.isEmpty || local.single['status'] == 'deleted') {
+            if (await _discardOrphans(txn, {key}) == 0) {
+              throw const AccountFailure(
+                'missing_source',
+                'Không xác định được dữ liệu mồ côi để loại.',
+              );
+            }
+            return true;
+          }
+          await _enqueue(txn, parent.table, local.single, null, 0);
+          pending = await txn.query(
+            'sync_outbox',
+            where: 'table_name=? AND entity_id=?',
+            whereArgs: [parent.table, parent.entityId],
+            orderBy: 'sequence',
+          );
+        }
+        for (final queued in pending) {
+          if (!includedGroups.add(queued['group_id'])) continue;
+          final group = await txn.query(
+            'sync_outbox',
+            where: 'group_id=?',
+            whereArgs: [queued['group_id']],
+            orderBy: 'sequence',
+          );
+          final parentRestoring = group.any(
+            (r) => markers.contains('restore.${r['operation_id']}'),
+          );
+          final parentResolving = group.any(
+            (r) => markers.contains('resolve.${r['operation_id']}'),
+          );
+          final childResolving = rows.any(
+            (r) => markers.contains('resolve.${r['operation_id']}'),
+          );
+          if (parentRestoring != restoring ||
+              parentResolving ||
+              childResolving) {
+            // Send the prerequisite transaction first without changing its policy.
+            rows
+              ..clear()
+              ..addAll(group);
+            return _includeParents(txn, rows, markers, parentRestoring);
+          }
+          rows.addAll(group);
+        }
+      }
+    }
+    return false;
+  }
+
+  /// Drop only required dependents of a parent known to be absent or deleted.
+  /// The caller owns the transaction; rejected frozen packets are cleared by
+  /// recoverMissingParents only after an explicit atomic server rejection.
+  Future<int> _discardOrphans(
+    Transaction txn,
+    Set<String> missingParents,
+  ) async {
+    final applying =
+        (await txn.query('sync_control', where: 'id=1')).single['applying']
+            as int;
+    if (applying == 0) {
+      await txn.update('sync_control', {'applying': 1}, where: 'id=1');
+    }
+    try {
+      final pending = await txn.query('sync_outbox', orderBy: 'sequence');
+      final candidates = <String, ({String table, String id, Map data})>{};
+      final localKeys = <String>{};
+      for (final entry in syncPrimaryKeys.entries) {
+        for (final row in await txn.query(entry.key)) {
+          final id = row[entry.value] as String;
+          final key = '${entry.key}:$id';
+          localKeys.add(key);
+          candidates[key] = (table: entry.key, id: id, data: row);
+        }
+      }
+      for (final row in pending) {
+        if (row['deleted'] == 1) continue;
+        final table = row['table_name'] as String;
+        final id = row['entity_id'] as String;
+        candidates.putIfAbsent(
+          '$table:$id',
+          () => (
+            table: table,
+            id: id,
+            data: jsonDecode(row['data'] as String) as Map,
+          ),
+        );
+      }
+      final bad = <String, String>{};
+      final missing = {...missingParents};
+      var changed = true;
+      while (changed) {
+        changed = false;
+        for (final candidate in candidates.entries) {
+          if (missing.contains(candidate.key)) continue;
+          for (final parent in syncParents(
+            candidate.value.table,
+            candidate.value.data,
+          )) {
+            final parentKey = '${parent.table}:${parent.entityId}';
+            if (!missing.contains(parentKey)) continue;
+            bad[candidate.key] = parentKey;
+            missing.add(candidate.key);
+            changed = true;
+            break;
+          }
+        }
+      }
+      // A frozen capture can refer to an old parent even after the current row
+      // has been edited to use a healthy parent. Drop that capture, not the row.
+      final staleCaptures = <int, String>{};
+      for (final row in pending) {
+        if (row['deleted'] == 1) continue;
+        final data = jsonDecode(row['data'] as String) as Map;
+        for (final parent in syncParents(row['table_name'] as String, data)) {
+          final parentKey = '${parent.table}:${parent.entityId}';
+          if (!missing.contains(parentKey)) continue;
+          staleCaptures[row['sequence'] as int] = parentKey;
+          break;
+        }
+      }
+      if (bad.isEmpty && staleCaptures.isEmpty) return 0;
+
+      final reportRaw = await txn.query(
+        'sync_state',
+        where: 'key=?',
+        whereArgs: ['orphanCleanupLog'],
+      );
+      final report = reportRaw.isEmpty
+          ? <String, dynamic>{'total': 0, 'entries': <dynamic>[]}
+          : jsonDecode(reportRaw.single['value'] as String)
+                as Map<String, dynamic>;
+      final entries = (report['entries'] as List).toList();
+      final now = DateTime.now().millisecondsSinceEpoch;
+      final tombstoneGroup = const Uuid().v4();
+      // Children first so foreign keys and local cascades cannot hide a row.
+      final order = syncPrimaryKeys.keys.toList().reversed.toList();
+      final keys =
+          {
+            ...bad.keys,
+            for (final row in pending)
+              if (staleCaptures.containsKey(row['sequence']))
+                '${row['table_name']}:${row['entity_id']}',
+          }.toList()..sort(
+            (a, b) => order
+                .indexOf(candidates[a]!.table)
+                .compareTo(order.indexOf(candidates[b]!.table)),
+          );
+      for (final key in keys) {
+        final entity = candidates[key]!;
+        final removeEntity = bad.containsKey(key);
+        final queued = pending.where(
+          (row) =>
+              row['table_name'] == entity.table &&
+              row['entity_id'] == entity.id &&
+              (removeEntity || staleCaptures.containsKey(row['sequence'])),
+        );
+        for (final row in queued) {
+          for (final prefix in ['restore', 'resolve']) {
+            await txn.delete(
+              'sync_state',
+              where: 'key=?',
+              whereArgs: ['$prefix.${row['operation_id']}'],
+            );
+          }
+        }
+        final mirror = await txn.query(
+          'sync_meta',
+          where: 'table_name=? AND entity_id=?',
+          whereArgs: [entity.table, entity.id],
+        );
+        if (removeEntity) {
+          await txn.delete(
+            'sync_outbox',
+            where: 'table_name=? AND entity_id=?',
+            whereArgs: [entity.table, entity.id],
+          );
+          await txn.delete(
+            entity.table,
+            where: '${syncPrimaryKeys[entity.table]}=?',
+            whereArgs: [entity.id],
+          );
+          await txn.delete(
+            'sync_state',
+            where: 'key=?',
+            whereArgs: ['ack.$key'],
+          );
+          if (mirror.isNotEmpty && mirror.single['deleted'] == 0) {
+            final deletion = {
+              ...jsonDecode(mirror.single['data'] as String) as Map,
+              syncPrimaryKeys[entity.table]!: entity.id,
+            };
+            await _enqueue(
+              txn,
+              entity.table,
+              deletion,
+              null,
+              0,
+              deleted: true,
+              groupId: tombstoneGroup,
+            );
+          }
+        } else {
+          for (final row in queued) {
+            await txn.delete(
+              'sync_outbox',
+              where: 'sequence=?',
+              whereArgs: [row['sequence']],
+            );
+          }
+          final remaining = await txn.query(
+            'sync_outbox',
+            where: 'table_name=? AND entity_id=?',
+            whereArgs: [entity.table, entity.id],
+            limit: 1,
+          );
+          if (remaining.isEmpty && localKeys.contains(key)) {
+            await _enqueue(
+              txn,
+              entity.table,
+              entity.data,
+              mirror.isEmpty
+                  ? null
+                  : jsonDecode(mirror.single['data'] as String) as Map,
+              mirror.isEmpty ? 0 : mirror.single['version'] as int,
+            );
+          }
+        }
+        final stale = queued.isEmpty
+            ? null
+            : staleCaptures[queued.first['sequence'] as int];
+        entries.add({
+          'table': entity.table,
+          'entityId': entity.id,
+          'parent': bad[key] ?? stale,
+          'action': removeEntity ? 'removed_record' : 'removed_capture',
+          'at': now,
+        });
+      }
+      await txn.insert('sync_state', {
+        'key': 'orphanCleanupLog',
+        'value': jsonEncode({
+          'total': (report['total'] as int) + keys.length,
+          'entries': entries.length > 100
+              ? entries.sublist(entries.length - 100)
+              : entries,
+        }),
+      }, conflictAlgorithm: ConflictAlgorithm.replace);
+      await _recount(txn);
+      return keys.length;
+    } finally {
+      if (applying == 0) {
+        await txn.update('sync_control', {'applying': 0}, where: 'id=1');
+      }
+    }
+  }
+
+  /// Only call after an explicit atomic rejection, never after a lost response.
+  Future<void> recoverMissingParents(
+    SyncPacket packet,
+    List<Map<String, String>> missing,
+  ) async {
+    if (missing.isEmpty) {
+      throw const AccountFailure(
+        'missing_parent',
+        'Dịch vụ đồng bộ cần được cập nhật để xác định dữ liệu cha bị thiếu.',
+      );
+    }
+    await _apply((txn) async {
+      final repairGroup = const Uuid().v4();
+      final absent = <String>{};
+      var repairing = false;
+      for (final parent in missing) {
+        final table = parent['table']!, id = parent['entityId']!;
+        final pk = syncPrimaryKeys[table];
+        if (pk == null || !RegExp(r'^[A-Za-z0-9_-]{1,128}$').hasMatch(id)) {
+          throw const AccountFailure(
+            'invalid_sync',
+            'Thông tin dữ liệu cha không hợp lệ.',
+          );
+        }
+        final local = await txn.query(table, where: '$pk=?', whereArgs: [id]);
+        final meta = await txn.query(
+          'sync_meta',
+          where: 'table_name=? AND entity_id=?',
+          whereArgs: [table, id],
+        );
+        if (local.isEmpty ||
+            local.single['status'] == 'deleted' ||
+            meta.firstOrNull?['deleted'] == 1) {
+          absent.add('$table:$id');
+          // The explicit 409 is stronger evidence than this local mirror.
+          // Leaving a stale live mirror would recreate the missing parent.
+          await txn.delete(
+            'sync_meta',
+            where: 'table_name=? AND entity_id=?',
+            whereArgs: [table, id],
+          );
+          await txn.delete(
+            'sync_state',
+            where: 'key=?',
+            whereArgs: ['ack.$table:$id'],
+          );
+          continue;
+        }
+        repairing = true;
+        await txn.delete(
+          'sync_state',
+          where: 'key=?',
+          whereArgs: ['ack.$table:$id'],
+        );
+        // The server has explicitly confirmed this parent's absence. Consolidate
+        // its pending captures into the repair transaction using the latest row.
+        final queued = await txn.query(
+          'sync_outbox',
+          where: 'table_name=? AND entity_id=?',
+          whereArgs: [table, id],
+        );
+        if (queued.isEmpty) {
+          await _enqueue(
+            txn,
+            table,
+            local.single,
+            null,
+            0,
+            groupId: repairGroup,
+          );
+        } else {
+          for (final capture in queued) {
+            if ((await txn.query(
+              'sync_state',
+              where: 'key=? OR key=?',
+              whereArgs: [
+                'resolve.${capture['operation_id']}',
+                'restore.${capture['operation_id']}',
+              ],
+            )).isNotEmpty) {
+              throw const AccountFailure(
+                'missing_source',
+                'Cần xử lý xung đột dữ liệu cha trước khi đồng bộ.',
+              );
+            }
+          }
+          await txn.update(
+            'sync_outbox',
+            {
+              'base_version': 0,
+              'before_data': null,
+              'data': jsonEncode(local.single),
+            },
+            where: 'table_name=? AND entity_id=?',
+            whereArgs: [table, id],
+          );
+          // Keep every original transaction intact, including its other rows.
+          for (final group in queued.map((r) => r['group_id']).toSet()) {
+            await txn.update(
+              'sync_outbox',
+              {'group_id': repairGroup},
+              where: 'group_id=?',
+              whereArgs: [group],
+            );
+          }
+        }
+      }
+      if (absent.isNotEmpty && await _discardOrphans(txn, absent) == 0) {
+        throw const AccountFailure(
+          'missing_source',
+          'Không xác định được dữ liệu mồ côi để loại.',
+        );
+      }
+      if (repairing) {
+        await txn.insert('sync_state', {
+          'key': 'repairGroup',
+          'value': repairGroup,
+        }, conflictAlgorithm: ConflictAlgorithm.replace);
+      }
+      await txn.delete(
+        'sync_packets',
+        where: 'group_id=?',
+        whereArgs: [packet.body['groupId']],
+      );
+    });
+  }
+
   Future<void> acknowledge(SyncPacket packet, Map response) async {
     final receipts = (response['receipts'] as List).cast<Map>();
     final operations = (packet.body['operations'] as List).cast<Map>();
@@ -325,6 +801,11 @@ class LocalSyncStore {
         final receipt = receipts.singleWhere(
           (r) => r['operationId'] == op['operationId'],
         );
+        // This is evidence of server existence, not a replacement for its mirror.
+        await txn.insert('sync_state', {
+          'key': 'ack.${op['table']}:${op['entityId']}',
+          'value': '${receipt['version']}',
+        }, conflictAlgorithm: ConflictAlgorithm.replace);
         await txn.rawUpdate(
           'UPDATE sync_outbox SET base_version=? WHERE table_name=? AND entity_id=? AND sequence>? AND base_version<=?',
           [
@@ -500,6 +981,10 @@ class LocalSyncStore {
         await db.delete(table, where: '$pk=?', whereArgs: [id]);
       }
       return;
+    }
+    if (table == 'source_blocks') {
+      // A legacy server row is unverified even if a prior local row was bound.
+      row.putIfAbsent('box_image_sha256', () => null);
     }
     final dependencies = switch (table) {
       'source_pages' => [('documents', 'document_id')],

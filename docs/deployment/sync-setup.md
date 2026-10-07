@@ -1,6 +1,6 @@
-# Đồng bộ MemoMind (Android, schema v10)
+# Đồng bộ MemoMind (Android, schema v11)
 
-Mỗi UID có một thư viện chuẩn tại `users/{uid}/sync/library`. SQLite vẫn là nguồn đọc khi học. Snapshot v9/v10 là điểm khôi phục trong **Nâng cao**, không phải nguồn tự động thay thư viện khi đăng nhập.
+Mỗi UID có một thư viện chuẩn tại `users/{uid}/sync/library`. SQLite vẫn là nguồn đọc khi học. Snapshot v9/v10/v11 là điểm khôi phục trong **Nâng cao**, không phải nguồn tự động thay thư viện khi đăng nhập.
 
 ## Triển khai
 
@@ -42,7 +42,15 @@ Tùy chọn **Tự động đồng bộ** được lưu trong `sync_state.automa
 
 Client dùng ID token được SDK quản lý; chỉ force-refresh và phát lại cùng payload một lần khi gặp `token_expired`, `token_invalid`, hoặc `reauth_required` của backend cũ. Backend dùng chung phân loại xác thực cho sync/backup: 401 cho token/phiên, 403 cho email chưa xác minh hoặc tài khoản bị khóa/xóa, 503 cho lỗi cấu hình/dịch vụ. `auth_configuration_error` không yêu cầu người dùng đăng nhập lại. Backend ghi `auth_verification_failed` gồm request ID và mã lỗi SDK; response có `X-Request-ID`, không log token, UID hoặc nội dung học. Đối chiếu log này để xác định nguyên nhân lỗi trên thiết bị thật.
 
-Triển khai backend mới trước client. `lastSynced` biểu thị thời điểm đồng bộ dữ liệu học; `mediaPending` giữ riêng trạng thái ảnh/PDF chưa hoàn tất qua lần mở lại app. Không thay schema dữ liệu học hay thuật toán lịch ôn. Chạy kiểm thử theo [hướng dẫn xác minh](../sync-validation.md) trước khi phát hành.
+Triển khai backend mới trước client. `lastSynced` biểu thị thời điểm đồng bộ dữ liệu học; `mediaPending` giữ riêng trạng thái ảnh/PDF chưa hoàn tất qua lần mở lại app. Schema v11 thêm `source_blocks.box_image_sha256` nullable và cập nhật trigger capture; thuật toán lịch ôn được giữ nguyên. Backend vẫn đọc packet v10 thiếu trường này và backup v9/v10. Chạy kiểm thử theo [hướng dẫn xác minh](../sync-validation.md) trước khi phát hành.
+
+## Nâng cấp nguồn OCR lên v11
+
+Triển khai backend trong `functions` trước khi phát hành ứng dụng hoặc cập nhật các thiết bị dùng chung tài khoản. Backend mới nhận `box_image_sha256`, backup v11 và trả `missingParents: [{table, entityId}]` trong lỗi HTTP 409 `missing_parent`. Không cần migration Firestore riêng cho trường nullable này.
+
+SQLite nâng v10 → v11 trong transaction, giữ packet/outbox đang đóng băng nguyên vẹn. Client chỉ đóng gói lại sau phản hồi xác nhận transaction bị từ chối; timeout hoặc mất phản hồi tiếp tục gửi cùng payload. Dữ liệu cha đã bị xóa không được tự phục hồi: client loại bản ghi con chắc chắn mồ côi, ghi nhật ký trên thiết bị và tiếp tục gửi phần hợp lệ. Backend cũ không trả ID cha thiếu thì client giữ gói và báo lỗi để tránh xóa nhầm.
+
+Thiết bị v10 còn hoạt động có thể gửi OCR chưa xác minh: backend chép cả nhóm văn bản/tọa độ và đặt dấu vân tay thiếu thành null. Client v11 đối chiếu lại với ảnh hiện tại trước khi vẽ. Cập nhật mọi thiết bị để tránh phải xác minh lại liên tục. Chi tiết và ma trận nghiệm thu ở [kiểm chứng tọa độ và nguồn](../source-geometry-validation.md).
 
 ## Nghiệm thu trước phát hành
 

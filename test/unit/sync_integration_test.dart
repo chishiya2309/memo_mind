@@ -23,6 +23,7 @@ import '../support/account_backup_fakes.dart';
 class _Api extends SyncApiClient {
   _Api(FakeAccountAuth auth, String url) : super(auth: auth, baseUrl: url);
   bool loseResponse = false;
+  bool loseBeforeRequest = false;
   bool corruptDownload = false;
   Future<void> Function()? duringPush;
   Future<void> Function()? beforeResolution;
@@ -49,6 +50,10 @@ class _Api extends SyncApiClient {
       final action = beforeResolution;
       beforeResolution = null;
       await action?.call();
+    }
+    if (suffix == '/push' && loseBeforeRequest) {
+      loseBeforeRequest = false;
+      throw const AccountFailure('unconfirmed', 'Lost response');
     }
     final result = await super.request(method, suffix, body: body, uid: uid);
     if (suffix == '/push' || suffix.endsWith('/resolve')) {
@@ -194,6 +199,429 @@ void main() {
       1,
     );
     expect(await b.reviews.getActiveSession(), isNull);
+    expect(await b.local.hasPending, isFalse);
+  });
+
+  test(
+    'legacy cloud geometry clears any previous local image binding',
+    () async {
+      final a = await device('A');
+      final db = await a.context.database.database;
+      await db.insert('documents', {
+        'document_id': 'doc',
+        'title': 'Source',
+        'status': 'ready_for_generation',
+        'created_at': 1,
+        'updated_at': 1,
+      });
+      await db.insert('source_pages', {
+        'page_id': 'page',
+        'document_id': 'doc',
+        'page_number': 1,
+        'original_page_number': 1,
+        'source': 'gallery',
+        'data_relative_path': 'documents/doc/image.png',
+        'mime_type': 'image/png',
+        'file_size_bytes': 1,
+        'width': 800,
+        'height': 1000,
+        'sha256': 'a' * 64,
+        'quality_code': 'good',
+        'quality_warning_accepted': 0,
+        'created_at': 1,
+      });
+      await db.insert('source_blocks', {
+        'block_id': 'block',
+        'document_id': 'doc',
+        'page_id': 'page',
+        'page_number': 1,
+        'order_index': 0,
+        'raw_text': 'Source',
+        'normalized_text': 'Source',
+        'box_left': .1,
+        'box_top': .1,
+        'box_width': .6,
+        'box_height': .2,
+        'has_valid_box': 1,
+        'box_image_sha256': 'a' * 64,
+        'confidence_source': 'unavailable',
+        'status': 'draft',
+        'created_at': 1,
+        'updated_at': 1,
+      });
+      final legacy =
+          Map<String, dynamic>.from((await db.query('source_blocks')).single)
+            ..remove('box_image_sha256')
+            ..['box_top'] = .5;
+      await db.delete(
+        'sync_outbox',
+        where: 'table_name=?',
+        whereArgs: ['source_blocks'],
+      );
+      await a.local.applyChanges({
+        'changes': [
+          {
+            'table': 'source_blocks',
+            'entityId': 'block',
+            'data': legacy,
+            'version': 1,
+            'deleted': false,
+            'groupEnd': true,
+          },
+        ],
+      });
+      final received = (await db.query('source_blocks')).single;
+      expect(received['box_top'], .5);
+      expect(received['box_image_sha256'], isNull);
+      await a.local.materializeMirrors();
+      expect(
+        (await db.query('source_blocks')).single['box_image_sha256'],
+        isNull,
+      );
+    },
+  );
+
+  test('explicit missing_parent recovers local parent and then sends the frozen children', () async {
+    final a = await device('A');
+    a.activate('phone');
+    final deck = await a.decks.createDeck(title: 'Recover parent');
+    final card = await a.decks.createManualCard(
+      deckId: deck.id,
+      content: const CardContent(type: CardType.basic, front: 'Q', back: 'A'),
+    );
+    final db = await a.context.database.database;
+    final deckRow = (await db.query('decks')).single;
+    await db.delete('sync_outbox', where: 'table_name=?', whereArgs: ['decks']);
+    // A stale mirror falsely says the parent exists; the real backend rejects it.
+    await db.insert('sync_meta', {
+      'table_name': 'decks',
+      'entity_id': deck.id,
+      'version': 1,
+      'data': jsonEncode(wireRow('decks', deckRow)),
+      'deleted': 0,
+    });
+    final frozen = await a.local.nextPacket('phone');
+    expect(
+      (frozen!.body['operations'] as List).any((op) => op['table'] == 'decks'),
+      isFalse,
+    );
+    await a.flush('phone');
+    expect(a.api.writes.length, greaterThanOrEqualTo(2));
+    expect(await a.local.hasPending, isFalse);
+    final b = await device('B');
+    await b.flush('tablet');
+    expect((await b.decks.getDecks()).single.id, deck.id);
+    expect((await b.decks.getCardsForDeck(deck.id)).single.id, card.id);
+  });
+
+  test(
+    'first sync removes an orphan schedule and keeps eight offline cards',
+    () async {
+      final a = await device('A');
+      a.activate('phone');
+      final deck = await a.decks.createDeck(title: 'Offline');
+      final ids = <String>[];
+      for (var i = 0; i < 8; i++) {
+        ids.add(
+          (await a.decks.createManualCard(
+            deckId: deck.id,
+            content: CardContent(
+              type: CardType.basic,
+              front: 'Q$i',
+              back: 'A$i',
+            ),
+          )).id,
+        );
+      }
+      final db = await a.context.database.database;
+      await a.context.database.studyTransaction(
+        (txn) => txn.insert('card_schedules', {
+          'card_id': 'ghost-card',
+          'repetitions': 1,
+          'interval_days': 1,
+          'ease_factor': 2.5,
+          'due_date': 1,
+          'reviewed_at': 1,
+          'device_id': 'phone',
+          'event_id': 'ghost-review',
+          'scheduler_version': 'sm2-v1',
+        }),
+      );
+      // Stale local metadata makes the first packet reach the backend, which
+      // explicitly rejects it as missing_parent.
+      await db.insert('sync_meta', {
+        'table_name': 'cards',
+        'entity_id': 'ghost-card',
+        'version': 1,
+        'data': '{}',
+        'deleted': 0,
+      });
+      await db.insert('sync_meta', {
+        'table_name': 'card_schedules',
+        'entity_id': 'ghost-card',
+        'version': 5,
+        'data': jsonEncode(
+          (await db.query(
+            'card_schedules',
+            where: 'card_id=?',
+            whereArgs: ['ghost-card'],
+          )).single,
+        ),
+        'deleted': 0,
+      });
+      await a.flush('phone');
+      expect((await db.query('cards')).length, 8);
+      expect(
+        await db.query(
+          'card_schedules',
+          where: 'card_id=?',
+          whereArgs: ['ghost-card'],
+        ),
+        isEmpty,
+      );
+      expect((await a.local.cleanupReport()).total, 1);
+      expect(a.sync.cleanupReport.total, 1);
+      expect(await a.local.hasPending, isFalse);
+      final b = await device('B');
+      await b.flush('tablet');
+      final received = await b.decks.getCardsForDeck(deck.id);
+      expect(received.map((card) => card.id).toSet(), ids.toSet());
+      await a.flush('phone');
+      expect((await a.local.cleanupReport()).total, 1);
+    },
+  );
+
+  test(
+    'guest offline cards import into a new account despite an orphan schedule',
+    () async {
+      final a = await device('A');
+      final guest = await a.workspaces.create(null);
+      await a.workspaces.select(guest);
+      a.activate('phone');
+      final deck = await a.decks.createDeck(title: 'Guest lessons');
+      for (var i = 0; i < 8; i++) {
+        await a.decks.createManualCard(
+          deckId: deck.id,
+          content: CardContent(
+            type: CardType.basic,
+            front: 'Guest Q$i',
+            back: 'Guest A$i',
+          ),
+        );
+      }
+      await a.context.database.studyTransaction(
+        (txn) => txn.insert('card_schedules', {
+          'card_id': 'guest-orphan',
+          'repetitions': 1,
+          'interval_days': 1,
+          'ease_factor': 2.5,
+          'due_date': 1,
+          'reviewed_at': 1,
+          'device_id': 'phone',
+          'event_id': 'guest-review',
+          'scheduler_version': 'sm2-v1',
+        }),
+      );
+      final canonical = await a.sync.prepareAccount(guest: guest);
+      await a.workspaces.select(canonical);
+      await a.flush('phone');
+      expect((await a.local.cleanupReport()).total, 1);
+      expect((await a.decks.getCardsForDeck(deck.id)).length, 8);
+      final b = await device('B');
+      await b.flush('tablet');
+      expect((await b.decks.getCardsForDeck(deck.id)).length, 8);
+    },
+  );
+
+  test(
+    'unknown result keeps a frozen orphan packet until a confirmed rejection',
+    () async {
+      final a = await device('A');
+      a.activate('phone');
+      final db = await a.context.database.database;
+      await a.context.database.studyTransaction(
+        (txn) => txn.insert('card_schedules', {
+          'card_id': 'missing-card',
+          'repetitions': 1,
+          'interval_days': 1,
+          'ease_factor': 2.5,
+          'due_date': 1,
+          'reviewed_at': 1,
+          'device_id': 'phone',
+          'event_id': 'missing-review',
+          'scheduler_version': 'sm2-v1',
+        }),
+      );
+      await db.insert('sync_meta', {
+        'table_name': 'cards',
+        'entity_id': 'missing-card',
+        'version': 1,
+        'data': '{}',
+        'deleted': 0,
+      });
+      final frozen = await a.local.nextPacket('phone');
+      a.api.loseBeforeRequest = true;
+      await a.sync.syncNow();
+      expect(a.sync.failureCode, 'unconfirmed');
+      expect((await a.local.cleanupReport()).total, 0);
+      expect((await a.local.nextPacket('phone'))!.body, frozen!.body);
+      await a.flush('phone');
+      expect((await a.local.cleanupReport()).total, 1);
+      expect(await a.local.hasPending, isFalse);
+    },
+  );
+
+  test(
+    'a stale capture is removed without deleting its now-valid card',
+    () async {
+      final a = await device('A');
+      a.activate('phone');
+      final deck = await a.decks.createDeck(title: 'Healthy');
+      final card = await a.decks.createManualCard(
+        deckId: deck.id,
+        content: const CardContent(type: CardType.basic, front: 'Q', back: 'A'),
+      );
+      final db = await a.context.database.database;
+      final row = (await db.query(
+        'cards',
+        where: 'card_id=?',
+        whereArgs: [card.id],
+      )).single;
+      await db.delete(
+        'sync_outbox',
+        where: 'table_name=? AND entity_id=?',
+        whereArgs: ['cards', card.id],
+      );
+      await db.insert('sync_outbox', {
+        'table_name': 'cards',
+        'entity_id': card.id,
+        'group_id': 'stale-group',
+        'operation_id': 'stale-op',
+        'base_version': 0,
+        'before_data': null,
+        'data': jsonEncode({...row, 'deck_id': 'missing-deck'}),
+        'deleted': 0,
+      });
+      await a.flush('phone');
+      expect(
+        (await db.query(
+          'cards',
+          where: 'card_id=?',
+          whereArgs: [card.id],
+        )).single['deck_id'],
+        deck.id,
+      );
+      expect((await a.local.cleanupReport()).total, 1);
+      final b = await device('B');
+      await b.flush('tablet');
+      expect((await b.decks.getCardsForDeck(deck.id)).single.id, card.id);
+    },
+  );
+
+  test(
+    'staged transaction retries valid cards after rejecting an orphan',
+    () async {
+      final a = await device('A');
+      a.activate('phone');
+      final deck = await a.decks.createDeck(title: 'Large offline deck');
+      final db = await a.context.database.database;
+      await a.context.database.studyTransaction((txn) async {
+        for (var i = 0; i < 51; i++) {
+          await txn.insert('cards', {
+            'card_id': 'large-$i',
+            'deck_id': deck.id,
+            'type': 'BASIC',
+            'status': 'active',
+            'front': 'Q$i',
+            'back': 'A$i',
+            'due_date': 1,
+            'created_at': 1,
+            'updated_at': 1,
+          });
+        }
+        await txn.insert('card_schedules', {
+          'card_id': 'staged-ghost',
+          'repetitions': 1,
+          'interval_days': 1,
+          'ease_factor': 2.5,
+          'due_date': 1,
+          'reviewed_at': 1,
+          'device_id': 'phone',
+          'event_id': 'staged-ghost-event',
+          'scheduler_version': 'sm2-v1',
+        });
+      });
+      await db.insert('sync_meta', {
+        'table_name': 'cards',
+        'entity_id': 'staged-ghost',
+        'version': 1,
+        'data': '{}',
+        'deleted': 0,
+      });
+      await a.flush('phone');
+      expect(a.api.writes.any((write) => write['route'] == '/stage'), isTrue);
+      expect((await db.query('cards')).length, 51);
+      expect((await a.local.cleanupReport()).total, 1);
+      final b = await device('B');
+      await b.flush('tablet');
+      expect((await b.decks.getCardsForDeck(deck.id)).length, 51);
+    },
+  );
+
+  test('missing local parent discards only required children and never resurrects a deleted deck', () async {
+    final a = await device('A');
+    a.activate('phone');
+    final deck = await a.decks.createDeck(title: 'Deleted parent');
+    await a.decks.createManualCard(
+      deckId: deck.id,
+      content: const CardContent(type: CardType.basic, front: 'Q', back: 'A'),
+    );
+    final db = await a.context.database.database;
+    await db.update('sync_control', {'applying': 1}, where: 'id=1');
+    await db.update(
+      'decks',
+      {'status': 'deleted'},
+      where: 'deck_id=?',
+      whereArgs: [deck.id],
+    );
+    await db.update('sync_control', {'applying': 0}, where: 'id=1');
+    await db.delete('sync_outbox', where: 'table_name=?', whereArgs: ['decks']);
+    await a.sync.syncNow();
+    expect(a.sync.error, isNull);
+    expect(await a.local.hasPending, isFalse);
+    expect((await db.query('decks')).single['status'], 'deleted');
+    expect(await db.query('cards'), isEmpty);
+    expect((await a.local.cleanupReport()).total, 2);
+    expect(a.api.writes, isEmpty);
+  });
+
+  test('packet includes an unseen parent from a later transaction across the 50-row limit', () async {
+    final a = await device('A');
+    a.activate('phone');
+    final deck = await a.decks.createDeck(title: 'Delayed parent');
+    final db = await a.context.database.database;
+    await db.delete('sync_outbox', where: 'table_name=?', whereArgs: ['decks']);
+    await a.context.database.studyTransaction((txn) async {
+      for (var i = 0; i < 51; i++) {
+        await txn.insert('cards', {
+          'card_id': 'dependent-$i',
+          'deck_id': deck.id,
+          'type': 'BASIC',
+          'status': 'active',
+          'front': 'Q$i',
+          'back': 'A$i',
+          'due_date': 1,
+          'created_at': 1,
+          'updated_at': 1,
+        });
+      }
+    });
+    await a.decks.updateDeck(deck.id, title: 'Parent arrives later');
+    await a.flush('phone');
+    expect(a.api.writes.where((p) => p['route'] == '/stage'), isNotEmpty);
+    final b = await device('B');
+    await b.flush('tablet');
+    expect((await b.decks.getCardsForDeck(deck.id)).length, 51);
     expect(await b.local.hasPending, isFalse);
   });
 

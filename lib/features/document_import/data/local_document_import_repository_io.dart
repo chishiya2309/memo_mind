@@ -504,6 +504,23 @@ class LocalDocumentImportRepository
       Directory(p.join(support.path, '.staging', 'image_normalization')),
     );
     final db = await _database.database;
+    final hasSync = (await db.rawQuery(
+      "SELECT name FROM sqlite_master WHERE name='sync_meta'",
+    )).isNotEmpty;
+    final remote = hasSync
+        ? await db.query('sync_meta', where: 'deleted=0')
+        : <Map<String, Object?>>[];
+    final remoteKeys = remote
+        .map((r) => '${r['table_name']}:${r['entity_id']}')
+        .toSet();
+    final mediaPending =
+        hasSync &&
+        (await db.query(
+          'sync_state',
+          where: "key='mediaPending' AND value='1'",
+        )).isNotEmpty;
+    bool waitingForFile(String table, Object? id) =>
+        mediaPending || remoteKeys.contains('$table:$id');
     final documentRows = await db.query('documents');
     final pageRows = await db.query('source_pages');
     final documents = {
@@ -516,7 +533,7 @@ class LocalDocumentImportRepository
       final relative = entry.value['original_file_relative_path'] as String?;
       if (relative == null) continue;
       final file = _resolveRelative(support.path, relative);
-      if (!await file.exists()) {
+      if (!await file.exists() && !waitingForFile('documents', entry.key)) {
         invalidPdfDocuments.add(entry.key);
       }
     }
@@ -525,6 +542,10 @@ class LocalDocumentImportRepository
       final documentId = page['document_id']! as String;
       final relative = page['data_relative_path']! as String;
       final file = _resolveRelative(support.path, relative);
+      if (waitingForFile('source_pages', page['page_id']) ||
+          waitingForFile('documents', documentId)) {
+        continue;
+      }
       if (!await file.exists() &&
           documents[documentId]?['original_file_relative_path'] != null) {
         invalidPdfDocuments.add(documentId);
@@ -536,7 +557,9 @@ class LocalDocumentImportRepository
     final normalizationRows = await db.query('page_normalizations');
     for (final normalization in normalizationRows) {
       final relative = normalization['normalized_relative_path']! as String;
-      if (!await _resolveRelative(support.path, relative).exists()) {
+      if (!await _resolveRelative(support.path, relative).exists() &&
+          !waitingForFile('page_normalizations', normalization['page_id']) &&
+          !waitingForFile('source_pages', normalization['page_id'])) {
         missingNormalizations.add(normalization['page_id']! as String);
       }
     }
@@ -581,8 +604,26 @@ class LocalDocumentImportRepository
           WHERE source_pages.document_id = documents.document_id
         )
       ''');
-      await txn.delete('documents', where: 'page_count = 0');
-      await txn.rawUpdate('''
+      final protectedDocuments = documentRows
+          .where((r) => waitingForFile('documents', r['document_id']))
+          .map((r) => r['document_id'])
+          .toList();
+      await txn.delete(
+        'documents',
+        where: protectedDocuments.isEmpty
+            ? 'page_count=0'
+            : 'page_count=0 AND document_id NOT IN (${List.filled(protectedDocuments.length, '?').join(',')})',
+        whereArgs: protectedDocuments.isEmpty ? null : protectedDocuments,
+      );
+      final affected = <Object?>{
+        ...invalidPdfDocuments,
+        for (final page in pageRows)
+          if (missingImagePages.contains(page['page_id']) ||
+              missingNormalizations.contains(page['page_id']))
+            page['document_id'],
+      };
+      if (affected.isNotEmpty) {
+        await txn.rawUpdate('''
         UPDATE documents
         SET status = CASE
           WHEN EXISTS (
@@ -591,8 +632,9 @@ class LocalDocumentImportRepository
               AND normalization_status = 'pending'
           ) THEN 'pending_processing'
           ELSE 'pending_ocr'
-        END
-      ''');
+        END WHERE document_id IN (${List.filled(affected.length, '?').join(',')})
+      ''', affected.toList());
+      }
     });
 
     final referenced = <String>{};

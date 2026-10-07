@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:ui';
+
 import 'package:uuid/uuid.dart';
 
 import '../../document_import/domain/document_import_models.dart';
@@ -39,10 +40,10 @@ class OcrOrchestrator {
     OcrEngine? ocrEngine,
     Uuid? uuid,
     DateTime Function()? clock,
-  })  : _repository = ocrRepository ?? LocalOcrRepository(),
-        _engine = ocrEngine ?? MlKitTextRecognitionEngine(),
-        _uuid = uuid ?? const Uuid(),
-        _clock = clock ?? DateTime.now;
+  }) : _repository = ocrRepository ?? LocalOcrRepository(),
+       _engine = ocrEngine ?? MlKitTextRecognitionEngine(),
+       _uuid = uuid ?? const Uuid(),
+       _clock = clock ?? DateTime.now;
 
   final OcrRepository _repository;
   final OcrEngine _engine;
@@ -80,14 +81,19 @@ class OcrOrchestrator {
         totalPages: total,
         pageNumber: page.pageNumber,
         pageId: page.pageId,
-        message: 'Đang xử lý trang $currentNumber/$total (Trang ${page.pageNumber})…',
+        message:
+            'Đang xử lý trang $currentNumber/$total (Trang ${page.pageNumber})…',
         failedPages: List.unmodifiable(failedPages),
         successfulPages: List.unmodifiable(successfulPages),
       );
 
       try {
-        final imagePath = page.displayPath;
-        final imageSize = Size(page.width.toDouble(), page.height.toDouble());
+        final raster = page.displayImage;
+        final imagePath = raster.path;
+        final imageSize = Size(
+          raster.width.toDouble(),
+          raster.height.toDouble(),
+        );
 
         final extracted = await _engine.recognizeText(
           imagePath: imagePath,
@@ -108,7 +114,8 @@ class OcrOrchestrator {
           );
 
           final hasValidBox = normBox != null && normBox.isValid;
-          final isLowConfidence = ext.confidence == null ||
+          final isLowConfidence =
+              ext.confidence == null ||
               ext.confidence! < lowConfidenceThreshold;
 
           // Luồng 11a / Luồng 9a / Luồng 15: đánh dấu needsReview nếu thiếu box hoặc confidence thấp
@@ -127,6 +134,7 @@ class OcrOrchestrator {
               rawText: trimmedText,
               normalizedText: trimmedText,
               boundingBox: normBox,
+              boxImageSha256: raster.sha256,
               hasValidBox: hasValidBox,
               confidence: ext.confidence,
               confidenceSource: ext.confidence != null
@@ -147,6 +155,7 @@ class OcrOrchestrator {
           blocks: sourceBlocks,
           rawFullText: extracted.rawFullText,
           language: extracted.detectedLanguage,
+          imageSha256: raster.sha256,
         );
 
         successfulPages.add(page);

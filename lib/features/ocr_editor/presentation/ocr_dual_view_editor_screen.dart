@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../../shared/theme/memo_theme.dart';
 import '../../document_import/domain/document_import_models.dart';
-import '../../document_import/presentation/stored_image.dart';
+import '../../document_import/presentation/source_raster_view.dart';
 import '../application/image_region_cropper.dart';
 import '../data/gemini_vision_enhancer.dart';
 import '../data/local_ocr_repository.dart';
@@ -44,6 +44,8 @@ class _OcrDualViewEditorScreenState extends State<OcrDualViewEditorScreen> {
   OcrDocumentReview? _review;
 
   int _currentPageIndex = 0;
+  Size _imageCanvasSize = Size.zero;
+  Size _viewportSize = Size.zero;
   String? _selectedBlockId;
   _BlockFilter _filter = _BlockFilter.all;
 
@@ -51,7 +53,8 @@ class _OcrDualViewEditorScreenState extends State<OcrDualViewEditorScreen> {
       TransformationController();
   final Map<String, GlobalKey> _blockKeys = {};
 
-  SourcePage get _currentPage => widget.document.pages[_currentPageIndex];
+  SourcePage get _currentPage =>
+      (_review?.document ?? widget.document).pages[_currentPageIndex];
 
   OcrPageReview? get _currentPageReview {
     if (_review == null) return null;
@@ -145,36 +148,42 @@ class _OcrDualViewEditorScreenState extends State<OcrDualViewEditorScreen> {
     final review = _currentPageReview;
     if (review == null) return;
     final block = review.blocks.firstWhere((b) => b.blockId == blockId);
-    if (block.boundingBox == null || !block.hasValidBox) return;
+    if (!block.hasBoxFor(_currentPage) || _imageCanvasSize.isEmpty) return;
 
     final box = block.boundingBox!;
     final centerX = box.left + box.width / 2;
     final centerY = box.top + box.height / 2;
 
-    // Reset or zoom smoothly towards center of bounding box
+    // Account for contain margins in the untransformed viewport.
+    final margin = Size(
+      (_viewportSize.width - _imageCanvasSize.width) / 2,
+      (_viewportSize.height - _imageCanvasSize.height) / 2,
+    );
     final zoom = 1.8;
     final matrix = Matrix4.diagonal3Values(zoom, zoom, 1.0)
       ..setTranslationRaw(
-        -centerX * 300 * (zoom - 1),
-        -centerY * 400 * (zoom - 1),
+        _viewportSize.width / 2 -
+            zoom * (margin.width + centerX * _imageCanvasSize.width),
+        _viewportSize.height / 2 -
+            zoom * (margin.height + centerY * _imageCanvasSize.height),
         0.0,
       );
 
     _transformController.value = matrix;
   }
 
-  void _onImageTap(TapUpDetails details, Size canvasSize) {
+  void _onImageTap(Offset position, Size canvasSize) {
     if (canvasSize.width <= 0 || canvasSize.height <= 0) return;
 
-    final normX = details.localPosition.dx / canvasSize.width;
-    final normY = details.localPosition.dy / canvasSize.height;
+    final normX = position.dx / canvasSize.width;
+    final normY = position.dy / canvasSize.height;
 
     final review = _currentPageReview;
     if (review == null) return;
 
     // Find block containing tap point
     for (final block in review.blocks) {
-      if (block.isDeleted || block.boundingBox == null || !block.hasValidBox) {
+      if (!block.hasBoxFor(_currentPage)) {
         continue;
       }
       final box = block.boundingBox!;
@@ -246,7 +255,7 @@ class _OcrDualViewEditorScreenState extends State<OcrDualViewEditorScreen> {
   }
 
   Future<void> _enhanceWithGemini(SourceBlock block) async {
-    if (block.boundingBox == null) {
+    if (!block.hasBoxFor(_currentPage)) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Đoạn này không có tọa độ vùng ảnh để gửi AI.'),
@@ -592,7 +601,11 @@ class _OcrDualViewEditorScreenState extends State<OcrDualViewEditorScreen> {
                 IconButton(
                   icon: const Icon(Icons.chevron_left_rounded),
                   onPressed: _currentPageIndex > 0
-                      ? () => setState(() => _currentPageIndex--)
+                      ? () => setState(() {
+                          _currentPageIndex--;
+                          _selectedBlockId = null;
+                          _transformController.value = Matrix4.identity();
+                        })
                       : null,
                 ),
                 Text(
@@ -602,7 +615,11 @@ class _OcrDualViewEditorScreenState extends State<OcrDualViewEditorScreen> {
                 IconButton(
                   icon: const Icon(Icons.chevron_right_rounded),
                   onPressed: _currentPageIndex < pages.length - 1
-                      ? () => setState(() => _currentPageIndex++)
+                      ? () => setState(() {
+                          _currentPageIndex++;
+                          _selectedBlockId = null;
+                          _transformController.value = Matrix4.identity();
+                        })
                       : null,
                 ),
               ],
@@ -639,29 +656,17 @@ class _OcrDualViewEditorScreenState extends State<OcrDualViewEditorScreen> {
             transformationController: _transformController,
             minScale: 0.8,
             maxScale: 4.0,
-            child: Center(
-              child: LayoutBuilder(
-                builder: (context, constraints) {
-                  return GestureDetector(
-                    onTapUp: (details) => _onImageTap(
-                      details,
-                      Size(constraints.maxWidth, constraints.maxHeight),
-                    ),
-                    child: CustomPaint(
-                      foregroundPainter: BoundingBoxPainter(
-                        blocks: blocks,
-                        selectedBlockId: _selectedBlockId,
-                        primaryColor: palette.primary,
-                        warningColor: palette.warning,
-                        tealColor: Colors.teal,
-                      ),
-                      child: StoredImage(
-                        path: _currentPage.displayPath,
-                        fit: BoxFit.contain,
-                      ),
-                    ),
-                  );
-                },
+            child: SourceRasterView(
+              image: _currentPage.displayImage,
+              onTap: _onImageTap,
+              onLayout: (size) => _imageCanvasSize = size,
+              onViewport: (size) => _viewportSize = size,
+              painter: BoundingBoxPainter(
+                blocks: blocks.where((b) => b.hasBoxFor(_currentPage)).toList(),
+                selectedBlockId: _selectedBlockId,
+                primaryColor: palette.primary,
+                warningColor: palette.warning,
+                tealColor: Colors.teal,
               ),
             ),
           ),

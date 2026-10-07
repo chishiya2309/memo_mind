@@ -22,7 +22,7 @@ function validateRequest(body, uid) {
   if (!body || !id(body.backupId) || !id(body.workspaceId) || (body.ownerUid !== undefined && body.ownerUid !== uid)) fail('invalid_backup', 'Thông tin bản sao không hợp lệ.');
   for (const field of ['bundleHash', 'manifestHash', 'fingerprint']) if (!/^[a-f0-9]{64}$/.test(body[field] ?? '')) fail('invalid_backup', 'Checksum không hợp lệ.');
   if (!Number.isSafeInteger(body.sizeBytes) || body.sizeBytes <= 0 || body.sizeBytes > limits.maxBytes || !Number.isSafeInteger(body.fileCount) || body.fileCount < 0 || body.fileCount > limits.maxFiles) fail('backup_limit', 'Bản sao vượt giới hạn.', 413);
-  if (![9,10].includes(body.schemaVersion) || body.schedulerVersion !== 'sm2-v1' || !Number.isSafeInteger(body.snapshotRevision) || body.snapshotRevision < 0 || !Number.isSafeInteger(body.snapshotAt)) fail('incompatible_backup', 'Phiên bản bản sao không được hỗ trợ.');
+  if (![9,10,11].includes(body.schemaVersion) || body.schedulerVersion !== 'sm2-v1' || !Number.isSafeInteger(body.snapshotRevision) || body.snapshotRevision < 0 || !Number.isSafeInteger(body.snapshotAt)) fail('incompatible_backup', 'Phiên bản bản sao không được hỗ trợ.');
   const fields = ['backupId', 'workspaceId', 'bundleHash', 'manifestHash', 'fingerprint', 'sizeBytes', 'fileCount', 'schemaVersion', 'schedulerVersion', 'snapshotRevision', 'snapshotAt'];
   if (body.automatic === true) fields.push('automatic');
   return Object.fromEntries(fields.map(k => [k, body[k]]));
@@ -87,7 +87,7 @@ async function inspectArchive(stream, expected, { signal } = {}) {
       if (!safeKey(file.fileKey) || !file.fileKey.startsWith('documents/') || keys.has(file.fileKey) || !actual || actual.sizeBytes !== file.sizeBytes || actual.sha256 !== file.sha256) fail('checksum_mismatch', 'Tệp nguồn thiếu hoặc hỏng.');
       keys.add(file.fileKey);
     }
-    const archiveTables = expected.schemaVersion === 10 ? [...tables, 'card_schedules'] : tables;
+    const archiveTables = expected.schemaVersion >= 10 ? [...tables, 'card_schedules'] : tables;
     if (!data.tables || Object.keys(data.tables).sort().join() !== [...archiveTables].sort().join() || archiveTables.some(t => !Array.isArray(data.tables[t]) || data.tables[t].some(row => !row || typeof row !== 'object' || Array.isArray(row)))) fail('invalid_data', 'Bảng dữ liệu không hợp lệ.');
     const fingerprint = hash(canonical({ schemaVersion: expected.schemaVersion, schedulerVersion: 'sm2-v1', dataHash: dataEntry.sha256, files: manifest.files }));
     if (fingerprint !== expected.fingerprint) fail('checksum_mismatch', 'Dấu vân tay nội dung không khớp.');

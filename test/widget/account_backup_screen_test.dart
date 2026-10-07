@@ -110,6 +110,28 @@ void main() {
     expect(find.text('Đã đồng bộ'), findsOneWidget);
   });
 
+  testWidgets('account shows the orphan cleanup log and its details', (
+    tester,
+  ) async {
+    await signedIn(tester);
+    controller.sync.cleanupReport = const OrphanCleanupReport(1, [
+      {
+        'table': 'card_schedules',
+        'entityId': 'broken-card',
+        'parent': 'cards:broken-card',
+        'at': 1,
+      },
+    ]);
+    controller.sync.notifyListeners();
+    await tester.pump();
+    final notice = find.text('Đã loại 1 mục hỏng khi đồng bộ');
+    await tester.ensureVisible(notice);
+    await tester.tap(notice);
+    await tester.pumpAndSettle();
+    expect(find.text('Dữ liệu mồ côi đã loại'), findsOneWidget);
+    expect(find.text('Lịch ôn · broken-card'), findsOneWidget);
+  });
+
   testWidgets(
     'logout retains pending data after cancel or failed sync and explicit keep',
     (tester) async {

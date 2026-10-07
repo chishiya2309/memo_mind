@@ -16,6 +16,20 @@ String syncDate(DateTime date) {
   return '${pad(d.day)}/${pad(d.month)}/${d.year} ${pad(d.hour)}:${pad(d.minute)}';
 }
 
+String _syncEntityLabel(String table) => switch (table) {
+  'documents' => 'Tài liệu',
+  'source_pages' => 'Trang nguồn',
+  'page_normalizations' => 'Ảnh đã chỉnh',
+  'ocr_page_results' => 'Kết quả OCR',
+  'source_blocks' => 'Đoạn nguồn',
+  'decks' => 'Bộ thẻ',
+  'cards' => 'Thẻ',
+  'review_sessions' => 'Phiên học',
+  'review_events' => 'Lần ôn',
+  'card_schedules' => 'Lịch ôn',
+  _ => table,
+};
+
 class SyncStatusButton extends StatelessWidget {
   const SyncStatusButton({super.key, required this.controller, this.onSignIn});
   final SyncController controller;
@@ -151,6 +165,52 @@ class SyncAccountPanel extends StatelessWidget {
             onTap: () => Navigator.of(context).push(
               MaterialPageRoute<void>(
                 builder: (_) => SyncConflictsScreen(controller: sync),
+              ),
+            ),
+          ),
+        if (sync.cleanupReport.total > 0)
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: const Icon(Icons.report_outlined),
+            title: Text(
+              'Đã loại ${sync.cleanupReport.total} mục hỏng khi đồng bộ',
+            ),
+            subtitle: const Text('Các mục hợp lệ vẫn được giữ để đồng bộ.'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => showDialog<void>(
+              context: context,
+              builder: (context) => AlertDialog(
+                title: const Text('Dữ liệu mồ côi đã loại'),
+                content: SizedBox(
+                  width: double.maxFinite,
+                  child: ListView(
+                    shrinkWrap: true,
+                    children: [
+                      if (sync.cleanupReport.total >
+                          sync.cleanupReport.entries.length)
+                        const Text('Hiển thị 100 mục gần đây nhất.'),
+                      for (final entry in sync.cleanupReport.entries.reversed)
+                        ListTile(
+                          dense: true,
+                          title: Text(
+                            '${_syncEntityLabel(entry['table'] as String)} · ${entry['entityId']}',
+                          ),
+                          subtitle: Text(
+                            '${entry['action'] == 'removed_capture' ? 'Đã bỏ thao tác cũ' : 'Đã xóa bản ghi'} vì thiếu '
+                            '${_syncEntityLabel((entry['parent'] as String).split(':').first)}: '
+                            '${(entry['parent'] as String).split(':').last} · '
+                            '${syncDate(DateTime.fromMillisecondsSinceEpoch(entry['at'] as int))}',
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(context),
+                    child: const Text('Đóng'),
+                  ),
+                ],
               ),
             ),
           ),

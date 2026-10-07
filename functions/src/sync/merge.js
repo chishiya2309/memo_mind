@@ -1,11 +1,13 @@
 const { canonical, fail } = require('../backup/validation');
+const { ApiError } = require('../validation');
 const { contentFields, ignoredFields, primaryKeys, key, validateOperation, validateRow, parents } = require('./schema');
 const equal = (a, b) => canonical(a ?? null) === canonical(b ?? null);
 const atomicGroups = {
-  cards: contentFields,
-  documents: ['original_file_name','original_file_relative_path','original_file_mime_type','original_file_size_bytes','original_file_sha256'],
-  source_pages: ['data_relative_path','mime_type','file_size_bytes','width','height','sha256'],
-  page_normalizations: ['revision','normalized_relative_path','mime_type','file_size_bytes','width','height','sha256','top_left_x','top_left_y','top_right_x','top_right_y','bottom_right_x','bottom_right_y','bottom_left_x','bottom_left_y','rotation_degrees','contrast'],
+  cards: [contentFields, ['source_document_id','source_page_id','source_page_number','source_block_id','source_quote']],
+  documents: [['original_file_name','original_file_relative_path','original_file_mime_type','original_file_size_bytes','original_file_sha256']],
+  source_pages: [['data_relative_path','mime_type','file_size_bytes','width','height','sha256']],
+  page_normalizations: [['revision','normalized_relative_path','mime_type','file_size_bytes','width','height','sha256','top_left_x','top_left_y','top_right_x','top_right_y','bottom_right_x','bottom_right_y','bottom_left_x','bottom_left_y','rotation_degrees','contrast']],
+  source_blocks: [['document_id','page_id','page_number','raw_text','normalized_text','status','box_left','box_top','box_width','box_height','box_image_sha256','has_valid_box']],
 };
 const scheduleKey = row => [row.reviewed_at || 0, row.device_id || '', row.event_id || ''];
 function newerSchedule(a, b) {
@@ -18,8 +20,16 @@ function mergeOperations(existing, operations, { revision = 0, deviceId, resolve
   for (const raw of operations) {
     const op = validateOperation(raw), entityKey = key(op.table, op.entityId), old = entities.get(entityKey);
     if (!op.deleted) {
-      const dependencies = parents(op.table, op.data).map(k => entities.get(k));
-      if (dependencies.some(e => !e)) fail('missing_parent', 'Dữ liệu nguồn chưa được đồng bộ.', 409);
+      const parentKeys = parents(op.table, op.data);
+      const dependencies = parentKeys.map(k => entities.get(k));
+      if (dependencies.some(e => !e)) {
+        const error = new ApiError(409, 'missing_parent', 'Dữ liệu nguồn chưa được đồng bộ.');
+        error.missingParents = parentKeys.filter(k => !entities.has(k)).map(k => {
+            const separator = k.indexOf(':');
+            return { table: k.slice(0, separator), entityId: k.slice(separator + 1) };
+        });
+        throw error;
+      }
       if (op.table !== 'review_events' && dependencies.some(e => e.deleted)) {
         if (op.table === 'card_schedules') { receipts.push({ operationId: op.operationId, version: old?.version || 0 }); continue; }
         const conflictId = op.operationId;
@@ -38,8 +48,9 @@ function mergeOperations(existing, operations, { revision = 0, deviceId, resolve
     let data = old ? { ...old.data } : { ...op.data }, deleted = old?.deleted || false;
     const fields = [...new Set(op.fields)].filter(f => f !== primaryKeys[op.table] && !ignoredFields.has(f));
     const checkFields = new Set(fields);
-    const atomic = atomicGroups[op.table];
-    if (atomic && fields.some(f => atomic.includes(f))) atomic.forEach(f => checkFields.add(f));
+    for (const atomic of atomicGroups[op.table] || []) {
+      if (fields.some(f => atomic.includes(f))) atomic.forEach(f => checkFields.add(f));
+    }
     const conflicting = old && [...checkFields].some(f => (old.fieldVersions?.[f] || 0) > op.baseVersion && !equal(old.data[f], op.data[f]));
     const deleteConflict = old && (op.deleted !== old.deleted) && op.baseVersion < old.version;
     if ((conflicting || deleteConflict || (old?.deleted && !op.deleted && !restore)) && !resolveConflictId && op.table !== 'card_schedules') {
@@ -48,7 +59,7 @@ function mergeOperations(existing, operations, { revision = 0, deviceId, resolve
       if (op.deleted && !deleted) deleted = true;
       else { receipts.push({ operationId: op.operationId, version: old.version, conflictId }); continue; }
     } else {
-      for (const f of fields) data[f] = op.data[f] ?? null;
+      for (const f of checkFields) data[f] = op.data[f] ?? null;
       if ('updated_at' in op.data) data.updated_at = op.data.updated_at;
       deleted = op.deleted;
     }

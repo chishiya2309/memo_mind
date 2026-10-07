@@ -133,6 +133,18 @@ class OriginalDocumentFile {
   final String sha256;
 }
 
+/// The exact raster used by OCR, geometry and source inspection.
+class SourceImage {
+  const SourceImage({
+    required this.path,
+    required this.width,
+    required this.height,
+    required this.sha256,
+  });
+  final String path, sha256;
+  final int width, height;
+}
+
 class SourcePage {
   const SourcePage({
     required this.pageId,
@@ -172,7 +184,17 @@ class SourcePage {
   final PageNormalizationStatus normalizationStatus;
   final NormalizedPageAsset? normalizedAsset;
 
-  String get displayPath => normalizedAsset?.absolutePath ?? absolutePath;
+  SourceImage get displayImage {
+    final asset = normalizedAsset;
+    return SourceImage(
+      path: asset?.absolutePath ?? absolutePath,
+      width: asset?.width ?? width,
+      height: asset?.height ?? height,
+      sha256: asset?.sha256 ?? sha256,
+    );
+  }
+
+  String get displayPath => displayImage.path;
 }
 
 class ImportedDocument {

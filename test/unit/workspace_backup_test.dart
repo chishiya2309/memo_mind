@@ -80,6 +80,25 @@ void main() {
       'created_at': 1,
       'updated_at': 1,
     });
+    await db.insert('source_blocks', {
+      'block_id': 'block',
+      'document_id': 'doc',
+      'page_id': 'page',
+      'page_number': 1,
+      'order_index': 0,
+      'raw_text': 'Source',
+      'normalized_text': 'Source',
+      'box_left': 0.1,
+      'box_top': 0.2,
+      'box_width': 0.6,
+      'box_height': 0.3,
+      'box_image_sha256': contentHash(bytes),
+      'has_valid_box': 1,
+      'confidence_source': 'mlkit',
+      'status': 'verified',
+      'created_at': 1,
+      'updated_at': 1,
+    });
     await db.insert('cards', {
       'card_id': 'card',
       'deck_id': 'deck',
@@ -177,6 +196,7 @@ void main() {
     final source = workspaces.current!;
     final codec = SnapshotCodec();
     final snapshot = await codec.capture(source, 'A');
+    expect(snapshot.request['schemaVersion'], 11);
     // Cross-runtime fixture consumed by the Node verifier in the validation run.
     final compatibility = Directory('.dart_tool/fr18');
     await compatibility.create(recursive: true);
@@ -201,6 +221,10 @@ void main() {
     final imported = MemoMindDatabase.atPath(restored.databasePath);
     final db = await imported.database;
     expect((await db.query('cards')).single['card_id'], 'card');
+    expect(
+      (await db.query('source_blocks')).single['box_image_sha256'],
+      (await db.query('source_pages')).single['sha256'],
+    );
     expect(
       (await db.query('cards')).single['mcq_payload'],
       contains('correctOptionId'),
@@ -285,98 +309,118 @@ void main() {
       throwsA(isA<AccountFailure>()),
     );
   });
-  test(
-    'v9 snapshots restore into v10 without replaying old review history',
-    () async {
-      await attach();
-      await seed();
-      final db = await workspaces.current!.database.database;
-      await db.update('cards', {
-        'repetitions': 4,
-        'interval_days': 21,
-        'ease_factor': 2.2,
-        'due_date': 9999,
-      });
-      final codec = SnapshotCodec(),
-          snapshot = await codec.capture(workspaces.current!, 'A');
-      final archive = ZipDecoder().decodeBytes(
-        await File(snapshot.path).readAsBytes(),
-      );
-      final tables =
-          (jsonDecode(utf8.decode(archive.find('data.json')!.content))
-                  as Map)['tables']
-              as Map;
-      tables.remove('card_schedules');
-      for (final row in tables['review_sessions'] as List) {
-        (row as Map).remove('device_id');
-        row.remove('is_local');
-      }
-      for (final row in tables['review_events'] as List) {
-        (row as Map).remove('schedule_after');
-        row.remove('scheduler_version');
-      }
-      final dataBytes = utf8.encode(canonicalJson({'tables': tables}));
-      final manifest = jsonDecode(
-        utf8.decode(archive.find('manifest.json')!.content),
-      ) as Map<String, dynamic>;
-      manifest['schemaVersion'] = 9;
-      manifest['dataHash'] = contentHash(dataBytes);
-      manifest['fingerprint'] = contentHash(
-        utf8.encode(
-          canonicalJson({
-            'schemaVersion': 9,
-            'schedulerVersion': 'sm2-v1',
-            'dataHash': manifest['dataHash'],
-            'files': manifest['files'],
-          }),
-        ),
-      );
-      final manifestBytes = utf8.encode(canonicalJson(manifest));
-      final legacy = Archive();
-      for (final file in archive) {
-        if (!['data.json', 'manifest.json'].contains(file.name)) {
-          legacy.addFile(file);
-        }
-      }
-      legacy.addFile(ArchiveFile('data.json', dataBytes.length, dataBytes));
-      legacy.addFile(
-        ArchiveFile('manifest.json', manifestBytes.length, manifestBytes),
-      );
-      final file = File(p.join(root.path, 'v9.zip'));
-      await file.writeAsBytes(ZipEncoder().encode(legacy));
-      final restored = await codec.restore(
-        file,
-        {
-          ...snapshot.request,
-          'schemaVersion': 9,
-          'fingerprint': manifest['fingerprint'],
-          'manifestHash': contentHash(manifestBytes),
-          'bundleHash': await fileHash(file),
-          'sizeBytes': await file.length(),
-          'status': 'ready',
-        },
-        'A',
-        workspaces,
-      );
-      final context = WorkspaceContext(restored, -12);
-      try {
-        final restoredDb = await context.database.database;
-        final schedule = (await restoredDb.query('card_schedules')).single;
-        expect(schedule['repetitions'], 4);
-        expect(schedule['interval_days'], 21);
-        expect(schedule['due_date'], 9999);
-        expect(schedule['reviewed_at'], 100);
-        expect(await restoredDb.query('sync_outbox'), isEmpty);
-        expect(
-          (await restoredDb.query('review_events')).single['event_id'],
-          'event',
+  for (final legacyVersion in [9, 10]) {
+    test(
+      'v$legacyVersion snapshots restore into v11 without replaying old review history',
+      () async {
+        await attach();
+        await seed();
+        final db = await workspaces.current!.database.database;
+        await db.update('cards', {
+          'repetitions': 4,
+          'interval_days': 21,
+          'ease_factor': 2.2,
+          'due_date': 9999,
+        });
+        await db.update('card_schedules', {
+          'repetitions': 4,
+          'interval_days': 21,
+          'ease_factor': 2.2,
+          'due_date': 9999,
+          'reviewed_at': 100,
+          'device_id': 'historical-device',
+          'event_id': 'event',
+        });
+        final codec = SnapshotCodec(),
+            snapshot = await codec.capture(workspaces.current!, 'A');
+        final archive = ZipDecoder().decodeBytes(
+          await File(snapshot.path).readAsBytes(),
         );
-      } finally {
-        await context.revoke();
-      }
-    },
-  );
-
+        final tables =
+            (jsonDecode(utf8.decode(archive.find('data.json')!.content))
+                    as Map)['tables']
+                as Map;
+        for (final row in tables['source_blocks'] as List) {
+          (row as Map).remove('box_image_sha256');
+        }
+        if (legacyVersion == 9) {
+          tables.remove('card_schedules');
+          for (final row in tables['review_sessions'] as List) {
+            (row as Map).remove('device_id');
+            row.remove('is_local');
+          }
+          for (final row in tables['review_events'] as List) {
+            (row as Map).remove('schedule_after');
+            row.remove('scheduler_version');
+          }
+        }
+        final dataBytes = utf8.encode(canonicalJson({'tables': tables}));
+        final manifest = jsonDecode(
+          utf8.decode(archive.find('manifest.json')!.content),
+        ) as Map<String, dynamic>;
+        manifest['schemaVersion'] = legacyVersion;
+        manifest['dataHash'] = contentHash(dataBytes);
+        manifest['fingerprint'] = contentHash(
+          utf8.encode(
+            canonicalJson({
+              'schemaVersion': legacyVersion,
+              'schedulerVersion': 'sm2-v1',
+              'dataHash': manifest['dataHash'],
+              'files': manifest['files'],
+            }),
+          ),
+        );
+        final manifestBytes = utf8.encode(canonicalJson(manifest));
+        final legacy = Archive();
+        for (final file in archive) {
+          if (!['data.json', 'manifest.json'].contains(file.name)) {
+            legacy.addFile(file);
+          }
+        }
+        legacy.addFile(ArchiveFile('data.json', dataBytes.length, dataBytes));
+        legacy.addFile(
+          ArchiveFile('manifest.json', manifestBytes.length, manifestBytes),
+        );
+        final file = File(p.join(root.path, 'v$legacyVersion.zip'));
+        await file.writeAsBytes(ZipEncoder().encode(legacy));
+        final restored = await codec.restore(
+          file,
+          {
+            ...snapshot.request,
+            'schemaVersion': legacyVersion,
+            'fingerprint': manifest['fingerprint'],
+            'manifestHash': contentHash(manifestBytes),
+            'bundleHash': await fileHash(file),
+            'sizeBytes': await file.length(),
+            'status': 'ready',
+          },
+          'A',
+          workspaces,
+        );
+        final context = WorkspaceContext(restored, -12);
+        try {
+          final restoredDb = await context.database.database;
+          final schedule = (await restoredDb.query('card_schedules')).single;
+          expect(schedule['repetitions'], 4);
+          expect(schedule['interval_days'], 21);
+          expect(schedule['due_date'], 9999);
+          expect(schedule['reviewed_at'], 100);
+          expect(await restoredDb.query('sync_outbox'), isEmpty);
+          expect(
+            (await restoredDb.query('source_blocks'))
+                .single['box_image_sha256'],
+            isNull,
+          );
+          expect(
+            (await restoredDb.query('review_events')).single['event_id'],
+            'event',
+          );
+        } finally {
+          await context.revoke();
+        }
+      },
+    );
+  }
   test('pinned source deletion waits for snapshot release', () async {
     final file = File(p.join(root.path, 'pinned'))..writeAsStringSync('source');
     SourceFilePins.pin(file.path);
@@ -421,7 +465,7 @@ void main() {
       final migrated = MemoMindDatabase.atPath(path);
       try {
         final db = await migrated.database;
-        expect(await db.getVersion(), 10);
+        expect(await db.getVersion(), 11);
         final baseline = (await db.query('card_schedules')).single;
         expect(baseline['repetitions'], 4);
         expect(baseline['interval_days'], 21);
@@ -464,7 +508,7 @@ void main() {
     expect((await LocalDeckRepository().getDecks()).single.id, 'legacy');
     expect(WorkspaceRuntime.deviceId, 'existing-device');
     final db = await migrated.current!.database.database;
-    expect(await db.getVersion(), 10);
+    expect(await db.getVersion(), 11);
     expect((await db.query('workspace_revision')).single['revision'], 0);
     await migrated.close();
     WorkspaceRuntime.current = workspaces.current;

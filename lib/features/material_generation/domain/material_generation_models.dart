@@ -92,9 +92,11 @@ class MaterialDraft {
   bool get isRejected => status == DraftCardStatus.rejected;
   bool get needsSourceCheck => status == DraftCardStatus.needsSourceCheck;
 
-  // Source references remain immutable when users edit card content.
+  // Content edits retain evidence; the exact source resolver may rebind it.
   MaterialDraft copyWith({
     String? id,
+    int? sourcePage,
+    String? sourceBlockId,
     String? front,
     String? back,
     List<McqOption>? options,
@@ -109,8 +111,8 @@ class MaterialDraft {
     type: type ?? this.type,
     front: front ?? this.front,
     back: back ?? _back,
-    sourcePage: sourcePage,
-    sourceBlockId: sourceBlockId,
+    sourcePage: sourcePage ?? this.sourcePage,
+    sourceBlockId: sourceBlockId ?? this.sourceBlockId,
     sourceQuote: sourceQuote,
     options: options == null ? this.options : List.unmodifiable(options),
     correctOptionId: (type ?? this.type) == CardType.mcq

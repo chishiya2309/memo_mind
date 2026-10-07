@@ -26,6 +26,40 @@ void main() {
     client: transport,
   );
 
+  test('missing parent diagnostics and confirmed HTTP rejection reach the controller', () async {
+    final api = client(
+      MockClient(
+        (request) async => http.Response(
+          jsonEncode({
+            'error': 'missing_parent',
+            'message': 'Dữ liệu nguồn chưa được đồng bộ.',
+            'missingParents': [
+              {'table': 'decks', 'entityId': 'deck'},
+            ],
+          }),
+          409,
+          headers: {
+            'x-request-id': 'request-1',
+            'content-type': 'application/json; charset=utf-8',
+          },
+        ),
+      ),
+    );
+    await expectLater(
+      api.request('POST', '/push', uid: 'A', body: {}),
+      throwsA(
+        isA<AccountFailure>()
+            .having((e) => e.code, 'code', 'missing_parent')
+            .having((e) => e.httpStatus, 'status', 409)
+            .having((e) => e.missingParents, 'parents', [
+              {'table': 'decks', 'entityId': 'deck'},
+            ])
+            .having((e) => e.requestId, 'requestId', 'request-1'),
+      ),
+    );
+    api.cancelTransfers();
+  });
+
   for (final code in ['token_expired', 'token_invalid', 'reauth_required']) {
     test('$code refreshes once and replays the identical operation', () async {
       final requests = <http.Request>[];

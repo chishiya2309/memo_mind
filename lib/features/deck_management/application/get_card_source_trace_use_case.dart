@@ -1,6 +1,7 @@
 import '../domain/deck_models.dart';
 import '../domain/deck_repository.dart';
 import '../../ocr_editor/domain/ocr_models.dart';
+import '../../material_generation/domain/material_validator.dart';
 
 class GetCardSourceTraceUseCase {
   const GetCardSourceTraceUseCase({required this.deckRepository});
@@ -13,9 +14,13 @@ class GetCardSourceTraceUseCase {
       final page = trace.sourcePage;
       final sourcePage =
           page != null &&
-              page.pageId == card.sourcePageId &&
+              (trace.sourceReferenceRepaired ||
+                  page.pageId == card.sourcePageId) &&
               page.documentId == card.sourceDocumentId &&
-              page.pageNumber == card.sourcePageNumber
+              page.pageNumber ==
+                  (trace.sourceReferenceRepaired
+                      ? trace.sourcePageNumber
+                      : card.sourcePageNumber)
           ? page
           : null;
 
@@ -23,25 +28,19 @@ class GetCardSourceTraceUseCase {
       SourceBlock? sourceBlock;
       if (block != null &&
           !block.isDeleted &&
-          block.blockId == card.sourceBlockId &&
+          (trace.sourceReferenceRepaired ||
+              block.blockId == card.sourceBlockId) &&
           block.documentId == card.sourceDocumentId &&
-          block.pageId == card.sourcePageId &&
-          block.pageNumber == card.sourcePageNumber) {
-        final box = block.boundingBox;
+          block.pageId == sourcePage?.pageId &&
+          block.pageNumber == sourcePage?.pageNumber &&
+          MaterialValidator.isQuoteSupported(
+            card.sourceQuote,
+            block.normalizedText,
+          )) {
         final hasValidBox =
             trace.imageUsesNormalizedCoordinates &&
-            block.hasValidBox &&
-            box != null &&
-            box.left.isFinite &&
-            box.top.isFinite &&
-            box.width.isFinite &&
-            box.height.isFinite &&
-            box.left >= 0 &&
-            box.top >= 0 &&
-            box.width > 0 &&
-            box.height > 0 &&
-            box.left + box.width <= 1 &&
-            box.top + box.height <= 1;
+            sourcePage != null &&
+            block.hasBoxFor(sourcePage);
         sourceBlock = hasValidBox ? block : block.copyWith(hasValidBox: false);
       }
 
@@ -51,7 +50,8 @@ class GetCardSourceTraceUseCase {
         sourcePage: sourcePage,
         sourceBlock: sourceBlock,
         imageFile: sourcePage == null ? null : trace.imageFile,
-        sourcePageNumber: card.sourcePageNumber,
+        sourcePageNumber: trace.sourcePageNumber ?? card.sourcePageNumber,
+        sourceReferenceRepaired: trace.sourceReferenceRepaired,
         imageUsesNormalizedCoordinates: trace.imageUsesNormalizedCoordinates,
         warning:
             trace.warning ??
