@@ -2,6 +2,8 @@
 
 MemoMind AI is an Android focused Flutter app for turning lecture documents into source cited study cards. It supports offline first camera and gallery import, on device OCR, AI assisted BASIC/CLOZE/MCQ generation, review and correction, and SQLite deck storage.
 
+[![Video Demo MemoMind](https://markdown-videos-api.jorgenkh.no/youtube/v9b394MFdKg)](https://www.youtube.com/watch?v=v9b394MFdKg)
+
 ## Architecture
 
 - Imported pages, confirmed OCR source blocks, decks, and cards are stored in SQLite. Accepted cards retain a document, page, and source block link.
